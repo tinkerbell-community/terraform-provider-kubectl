@@ -14,18 +14,7 @@ This `terraform-provider-kubectl` provider has been originally forked from `gavi
 
 The provider can be installed and managed automatically by Terraform. Sample `versions.tf` file :
 
-```terraform
-terraform {
-  required_version = ">= 0.13"
-
-  required_providers {
-    kubectl = {
-      source  = "alekc/kubectl"
-      version = ">= 2.0.0"
-    }
-  }
-}
-```
+{{tffile "examples/example_1.tf"}}
 
 #### Install manually
 
@@ -37,14 +26,7 @@ The provider supports the same configuration parameters as the [Kubernetes Terra
 
 > Note: Unlike the Terraform Kubernetes Provider, this provider will load the `KUBECONFIG` file if the environment variable is set.
 
-```terraform
-provider "kubectl" {
-  host                   = var.eks_cluster_endpoint
-  cluster_ca_certificate = base64decode(var.eks_cluster_ca)
-  token                  = data.aws_eks_cluster_auth.main.token
-  load_config_file       = false
-}
-```
+{{tffile "examples/example_2.tf"}}
 
 ### Argument Reference
 
@@ -77,74 +59,18 @@ The following arguments are supported:
 
 As with the Kubernetes Terraform Provider, this provider also supports using a `exec` based plugin (for example when running on EKS).
 
-```terraform
-provider "kubectl" {
-  apply_retry_count      = 15
-  host                   = var.eks_cluster_endpoint
-  cluster_ca_certificate = base64decode(var.eks_cluster_ca)
-  load_config_file       = false
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1alpha1"
-    command     = "aws-iam-authenticator"
-    args = [
-      "token",
-      "-i",
-      module.eks.cluster_id,
-    ]
-  }
-}
-```
+{{tffile "examples/example_3.tf"}}
 
 ### Retry Support
 
 The provider has an additional parameter `apply_retry_count` that allows kubernetes commands to be retried on failure. This is useful if you have flaky CRDs or network connections and need to wait for the cluster state to be back in quorum. This applies to both create and update operations.
 
-```terraform
-provider "kubectl" {
-  apply_retry_count = 15
-}
-```
+{{tffile "examples/example_4.tf"}}
 
 ## Example
 
 Loading a raw yaml manifest into kubernetes is simple, just set the `yaml_body` argument:
 
-```terraform
-provider "kubectl" {
-  host                   = var.eks_cluster_endpoint
-  cluster_ca_certificate = base64decode(var.eks_cluster_ca)
-  token                  = data.aws_eks_cluster_auth.main.token
-  load_config_file       = false
-}
-
-resource "kubectl_manifest" "test" {
-    yaml_body = <<YAML
-apiVersion: couchbase.com/v1
-kind: CouchbaseCluster
-metadata:
-  name: name-here-cluster
-spec:
-  baseImage: name-here-image
-  version: name-here-image-version
-  authSecret: name-here-operator-secret-name
-  exposeAdminConsole: true
-  adminConsoleServices:
-    - data
-  cluster:
-    dataServiceMemoryQuota: 256
-    indexServiceMemoryQuota: 256
-    searchServiceMemoryQuota: 256
-    eventingServiceMemoryQuota: 256
-    analyticsServiceMemoryQuota: 1024
-    indexStorageSetting: memory_optimized
-    autoFailoverTimeout: 120
-    autoFailoverMaxCount: 3
-    autoFailoverOnDataDiskIssues: true
-    autoFailoverOnDataDiskIssuesTimePeriod: 120
-    autoFailoverServerGroup: false
-YAML
-}
-```
+{{tffile "examples/example_5.tf"}}
 
 Updates are also preserved, so you can fully manage your kubernetes resources with ease!

@@ -6,10 +6,9 @@ This provider provides a `data` resource `kubectl_file_documents` to enable ease
 
 ### Example Usage with for_each
 
-The recommended approach is to use the `manifests` attribute and a `for_each` expression to apply the found manifests.
-This ensures that any additional yaml documents or removals do not cause a large amount of terraform changes.
+The recommended approach is to use the `manifests` attribute and a `for_each` expression to apply the found manifests. This ensures that any additional yaml documents or removals do not cause a large amount of terraform changes.
 
-```hcl
+```terraform
 data "kubectl_file_documents" "docs" {
     content = file("multi-doc-manifest.yaml")
 }
@@ -24,7 +23,7 @@ resource "kubectl_manifest" "test" {
 
 Raw documents can also be accessed via the `documents` attribute.
 
-```hcl
+```terraform
 data "kubectl_file_documents" "docs" {
     content = file("multi-doc-manifest.yaml")
 }

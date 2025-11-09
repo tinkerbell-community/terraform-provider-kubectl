@@ -6,12 +6,11 @@ This resource handles creation, deletion and even updating your Kubernetes resou
 
 Behind the scenes, this provider uses the same capability as the `kubectl apply` command, that is, you can update the YAML inline and the resource will be updated in place in Kubernetes.
 
-> **TIP:** This resource only supports a single yaml resource. If you have a list of documents in your yaml file,
-> use the [kubectl_path_documents](https://registry.terraform.io/providers/alekc/kubectl/latest/docs/data-sources/kubectl_path_documents) data source to split the files into individual resources.
+> **TIP:** This resource only supports a single yaml resource. If you have a list of documents in your yaml file, use the [kubectl_path_documents](https://registry.terraform.io/providers/alekc/kubectl/latest/docs/data-sources/kubectl_path_documents) data source to split the files into individual resources.
 
 ## Example Usage
 
-```hcl
+```terraform
 resource "kubectl_manifest" "test" {
     yaml_body = <<YAML
 apiVersion: networking.k8s.io/v1
@@ -38,9 +37,9 @@ YAML
 
 ### With explicit `wait_for`
 
-If `wait_for` is specified, upon applying the resource, provider will wait for **all** conditions to become true before proceeding further.  
+If `wait_for` is specified, upon applying the resource, provider will wait for **all** conditions to become true before proceeding further.
 
-```hcl
+```terraform
 resource "kubectl_manifest" "test" {
   wait_for {
     field {
@@ -96,7 +95,7 @@ YAML
 * `override_namespace` - Optional. Override the namespace to apply the kubernetes resource to, ignoring any declared namespace in the `yaml_body`.
 * `validate_schema` - Optional. Setting to `false` will mimic `kubectl apply --validate=false` mode. Default `true`.
 * `wait` - Optional. Set this flag to wait or not for finalized to complete for deleted objects. Default `false`.
-* `wait_for_rollout` - Optional. Set this flag to wait or not for `Deployment`, `DaemonSet`, `StatefulSet` & `APIService`  resources to complete rollout. Default `true`.
+* `wait_for_rollout` - Optional. Set this flag to wait or not for `Deployment`, `DaemonSet`, `StatefulSet` & `APIService` resources to complete rollout. Default `true`.
 * `wait_for` - Optional. If set, will wait until either all conditions are satisfied, or until timeout is reached (see [below for nested schema](#wait_for)). Under the hood [gojsonq](https://github.com/thedevsaddam/gojsonq) is used for querying, see the related syntax and examples.
 * `delete_cascade` - Optional; `Background` or `Foreground` are valid options. If set this overrides the default provider behaviour which is to use `Background` unless `wait` is `true` when `Foreground` will be used. To duplicate the default behaviour of `kubectl` this should be explicitly set to `Background`.
 
@@ -145,7 +144,7 @@ By default, this is set to `["data"]` for all `v1/Secret` manifests.
 
 The fields provided should use dot-separator syntax to specify the field to obfuscate.
 
-```hcl
+```terraform
 resource "kubectl_manifest" "test" {
     sensitive_fields = [
         "metadata.annotations.my-secret-annotation"
@@ -169,25 +168,24 @@ YAML
 
 ## Ignore Manifest Fields
 
-You can configure a list of yaml keys to ignore changes to via the `ignore_fields` field.
-Set these for fields set by Operators or other processes in kubernetes and as such you don't want to update.
+You can configure a list of yaml keys to ignore changes to via the `ignore_fields` field. Set these for fields set by Operators or other processes in kubernetes and as such you don't want to update.
 
 By default, the following control fields are ignored:
-  - `status`
-  - `metadata.finalizers`
-  - `metadata.initializers`
-  - `metadata.ownerReferences`
-  - `metadata.creationTimestamp`
-  - `metadata.generation`
-  - `metadata.resourceVersion`
-  - `metadata.uid`
-  - `metadata.annotations.kubectl.kubernetes.io/last-applied-configuration`
+- `status`
+- `metadata.finalizers`
+- `metadata.initializers`
+- `metadata.ownerReferences`
+- `metadata.creationTimestamp`
+- `metadata.generation`
+- `metadata.resourceVersion`
+- `metadata.uid`
+- `metadata.annotations.kubectl.kubernetes.io/last-applied-configuration`
 
 These syntax matches the Terraform style flattened-map syntax, whereby keys are separated by `.` paths.
 
 For example, to ignore the `annotations`, set the `ignore_fields` path to `metadata.annotations`:
 
-```hcl
+```terraform
 resource "kubectl_manifest" "test" {
     yaml_body = <<YAML
 apiVersion: v1
@@ -203,10 +201,9 @@ YAML
 }
 ```
 
-For arrays, the syntax is indexed based on the element position. For example, to ignore the `caBundle` field in the
-below manifest, would be: `webhooks.0.clientConfig.caBundle`
+For arrays, the syntax is indexed based on the element position. For example, to ignore the `caBundle` field in the below manifest, would be: `webhooks.0.clientConfig.caBundle`
 
-```hcl
+```terraform
 resource "kubectl_manifest" "test" {
     yaml_body = <<YAML
 apiVersion: admissionregistration.k8s.io/v1beta1
@@ -226,8 +223,7 @@ More examples can be found in the provider tests.
 
 ## Waiting for Rollout
 
-By default, this resource will wait for `Deployment`, `DaemonSet`, `StatefulSet` & `APIService` to complete their rollout before proceeding.
-You can disable this behavior by setting the `wait_for_rollout` field to `false`.
+By default, this resource will wait for `Deployment`, `DaemonSet`, `StatefulSet` & `APIService` to complete their rollout before proceeding. You can disable this behavior by setting the `wait_for_rollout` field to `false`.
 
 ## Import
 

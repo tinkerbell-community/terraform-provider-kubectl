@@ -1,20 +1,16 @@
 # Data Source: kubectl_path_documents
 
-This provider provides a `data` resource `kubectl_path_documents` to enable ease of splitting multi-document yaml content, 
-from a collection of matching files.
-Think of is as a combination of both `kubectl_filename_list` and `kubectl_file_documents`
+This provider provides a `data` resource `kubectl_path_documents` to enable ease of splitting multi-document yaml content, from a collection of matching files. Think of is as a combination of both `kubectl_filename_list` and `kubectl_file_documents`
 
-`kubectl_path_documents` also supports rendering of Terraform Templates (similar to the template provider).
-This gives you the flexibility of parameterizing your manifests, and loading & templating in a single command.
+`kubectl_path_documents` also supports rendering of Terraform Templates (similar to the template provider). This gives you the flexibility of parameterizing your manifests, and loading & templating in a single command.
 
 ## Example Usage
 
 ### Load all manifest documents from a folder via for_each (recommended)
 
-The recommended approach is to use the `manifests` attribute and a `for_each` expression to apply the found manifests.
-This ensures that any additional yaml documents or removals do not cause a large amount of terraform changes.
+The recommended approach is to use the `manifests` attribute and a `for_each` expression to apply the found manifests. This ensures that any additional yaml documents or removals do not cause a large amount of terraform changes.
 
-```hcl
+```terraform
 data "kubectl_path_documents" "manifests-directory-yaml" {
   pattern = "./manifests/*.yaml"
 }
@@ -26,10 +22,9 @@ resource "kubectl_manifest" "directory-yaml" {
 
 ### Load all manifest documents via count
 
-Raw documents can also be accessed via the `documents` attribute. Not that if the document order is changed (i.e. a new file is added), 
-then it would trigger destruction and recreation of related documents. 
+Raw documents can also be accessed via the `documents` attribute. Not that if the document order is changed (i.e. a new file is added), then it would trigger destruction and recreation of related documents.
 
-```hcl
+```terraform
 data "kubectl_path_documents" "docs" {
     pattern = "./manifests/*.yaml"
 }
@@ -42,7 +37,7 @@ resource "kubectl_manifest" "test" {
 
 ### Example Template
 
-```hcl
+```terraform
 #
 # Given the following YAML template
 #
@@ -75,7 +70,7 @@ data "kubectl_path_documents" "manifests" {
 
 Templates even support directives, meaning you can add conditions and another logic to your template:
 
-```hcl
+```terraform
 #
 # Given the following YAML template
 #
@@ -108,7 +103,7 @@ data "kubectl_path_documents" "manifests" {
 
 Using a directive to generate multiple manifests is possible with using a combination of split and directive within the template:
 
-```hcl
+```terraform
 #
 # Given the following YAML template
 #

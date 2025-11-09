@@ -4,7 +4,7 @@ This provider provides a `data` resource `kubectl_filename_list` to enable ease 
 
 ## Example Usage
 
-```hcl
+```terraform
 data "kubectl_filename_list" "manifests" {
     pattern = "./manifests/*.yaml"
 }

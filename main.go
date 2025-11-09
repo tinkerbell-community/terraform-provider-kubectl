@@ -12,7 +12,7 @@ import (
 // version is set via -ldflags during build
 var version string = "dev"
 
-//go:generate go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate -provider-name kubectl
+//go:generate go tool tfplugindocs generate -provider-name kubectl
 
 func main() {
 	var debug bool
