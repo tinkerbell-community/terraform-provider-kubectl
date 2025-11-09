@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/alekc/terraform-provider-kubectl/yaml"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -360,13 +362,14 @@ func (r *manifestResource) Create(
 	retryConfig.MaxElapsedTime = createTimeout
 
 	retryCount := r.providerData.ApplyRetryCount
+	var backoffStrategy backoff.BackOff = retryConfig
 	if retryCount > 0 {
-		retryConfig = backoff.WithMaxRetries(retryConfig, uint64(retryCount))
+		backoffStrategy = backoff.WithMaxRetries(retryConfig, uint64(retryCount))
 	}
 
 	err := backoff.Retry(func() error {
 		return r.applyManifest(createCtx, &plan)
-	}, retryConfig)
+	}, backoffStrategy)
 
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -455,13 +458,14 @@ func (r *manifestResource) Update(
 	retryConfig.MaxElapsedTime = createTimeout
 
 	retryCount := r.providerData.ApplyRetryCount
+	var backoffStrategy backoff.BackOff = retryConfig
 	if retryCount > 0 {
-		retryConfig = backoff.WithMaxRetries(retryConfig, uint64(retryCount))
+		backoffStrategy = backoff.WithMaxRetries(retryConfig, uint64(retryCount))
 	}
 
 	err := backoff.Retry(func() error {
 		return r.applyManifest(updateCtx, &plan)
-	}, retryConfig)
+	}, backoffStrategy)
 
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -707,38 +711,297 @@ func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	// TODO: Implement manifest apply logic
-	// - Parse YAML
-	// - Get REST client
-	// - Apply using kubectl apply or server-side apply
-	// - Wait for rollout if needed
-	// - Wait for conditions if specified
-	return fmt.Errorf("applyManifest not yet implemented")
+	yamlBody := model.YAMLBody.ValueString()
+
+	// Parse YAML into manifest
+	manifest, err := yaml.ParseYAML(yamlBody)
+	if err != nil {
+		return fmt.Errorf("failed to parse kubernetes resource: %w", err)
+	}
+
+	// Apply namespace override if provided
+	if !model.OverrideNamespace.IsNull() {
+		manifest.SetNamespace(model.OverrideNamespace.ValueString())
+	}
+
+	log.Printf("[DEBUG] %v apply kubernetes resource:\n%s", manifest, yamlBody)
+
+	// Create REST client for this resource type
+	restClient := util.GetRestClientFromUnstructured(
+		ctx,
+		manifest,
+		r.providerData.MainClientset,
+		r.providerData.RestConfig,
+	)
+	if restClient.Error != nil {
+		return fmt.Errorf(
+			"%v failed to create kubernetes rest client for resource: %w",
+			manifest,
+			restClient.Error,
+		)
+	}
+
+	// Convert manifest back to YAML (in case namespace was overridden)
+	yamlBody, err = manifest.AsYAML()
+	if err != nil {
+		return fmt.Errorf("%v failed to convert to yaml: %w", manifest, err)
+	}
+
+	// Create temp file for kubectl apply
+	tmpfile, err := os.CreateTemp("", "*kubectl_manifest.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpfile.Name())
+
+	if _, err := tmpfile.Write([]byte(yamlBody)); err != nil {
+		tmpfile.Close()
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmpfile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Create apply options
+	applyOptions := util.NewApplyOptions(yamlBody, r.providerData.RestConfig)
+
+	// Configure apply options
+	validateSchema := true
+	if !model.ValidateSchema.IsNull() {
+		validateSchema = model.ValidateSchema.ValueBool()
+	}
+
+	serverSideApply := false
+	if !model.ServerSideApply.IsNull() {
+		serverSideApply = model.ServerSideApply.ValueBool()
+	}
+
+	fieldManager := "kubectl"
+	if !model.FieldManager.IsNull() {
+		fieldManager = model.FieldManager.ValueString()
+	}
+
+	forceConflicts := false
+	if !model.ForceConflicts.IsNull() {
+		forceConflicts = model.ForceConflicts.ValueBool()
+	}
+
+	util.ConfigureApplyOptions(
+		applyOptions,
+		manifest,
+		tmpfile.Name(),
+		validateSchema,
+		serverSideApply,
+		fieldManager,
+		forceConflicts,
+	)
+
+	log.Printf("[INFO] %s perform apply of manifest", manifest)
+
+	// Run apply
+	if err := applyOptions.Run(); err != nil {
+		return fmt.Errorf("%v failed to run apply: %w", manifest, err)
+	}
+
+	log.Printf("[INFO] %v manifest applied, fetch resource from kubernetes", manifest)
+
+	// Get the resource from Kubernetes
+	rawResponse, err := restClient.ResourceInterface.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("%v failed to fetch resource from kubernetes: %w", manifest, err)
+	}
+
+	// Set response wrapper
+	response := yaml.NewFromUnstructured(rawResponse)
+
+	// Generate ID (apiVersion//kind//namespace//name or apiVersion//kind//name)
+	if response.HasNamespace() {
+		model.ID = types.StringValue(fmt.Sprintf(
+			"%s//%s//%s//%s",
+			response.GetAPIVersion(),
+			response.GetKind(),
+			response.GetNamespace(),
+			response.GetName(),
+		))
+	} else {
+		model.ID = types.StringValue(fmt.Sprintf(
+			"%s//%s//%s",
+			response.GetAPIVersion(),
+			response.GetKind(),
+			response.GetName(),
+		))
+	}
+
+	// Set computed values
+	model.APIVersion = types.StringValue(response.GetAPIVersion())
+	model.Kind = types.StringValue(response.GetKind())
+	model.Name = types.StringValue(response.GetName())
+	
+	if response.HasNamespace() {
+		model.Namespace = types.StringValue(response.GetNamespace())
+	} else {
+		model.Namespace = types.StringNull()
+	}
+
+	model.UID = types.StringValue(string(response.GetUID()))
+	model.LiveUID = types.StringValue(string(response.GetUID()))
+
+	log.Printf("[DEBUG] %v fetched successfully, set id to: %v", manifest, model.ID.ValueString())
+
+	// TODO: Handle wait_for_rollout if specified
+	// TODO: Handle wait_for conditions if specified
+
+	return nil
 }
 
 func (r *manifestResource) readManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	// TODO: Implement manifest read logic
-	// - Parse YAML to get resource identifiers
-	// - Get REST client
-	// - Read from Kubernetes API
-	// - Update model with current state
-	// - Generate fingerprints for drift detection
-	return fmt.Errorf("readManifest not yet implemented")
+	yamlBody := model.YAMLBody.ValueString()
+
+	// Parse YAML to get resource identifiers
+	manifest, err := yaml.ParseYAML(yamlBody)
+	if err != nil {
+		return fmt.Errorf("failed to parse kubernetes resource: %w", err)
+	}
+
+	// Apply namespace override if provided
+	if !model.OverrideNamespace.IsNull() {
+		manifest.SetNamespace(model.OverrideNamespace.ValueString())
+	}
+
+	log.Printf("[DEBUG] %v reading kubernetes resource", manifest)
+
+	// Create REST client for this resource type
+	restClient := util.GetRestClientFromUnstructured(
+		ctx,
+		manifest,
+		r.providerData.MainClientset,
+		r.providerData.RestConfig,
+	)
+	if restClient.Error != nil {
+		return fmt.Errorf(
+			"%v failed to create kubernetes rest client for resource: %w",
+			manifest,
+			restClient.Error,
+		)
+	}
+
+	// Get the resource from Kubernetes
+	rawResponse, err := restClient.ResourceInterface.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
+	if err != nil {
+		if util.IsNotFoundError(err) {
+			// Resource not found - will be removed from state by caller
+			return err
+		}
+		return fmt.Errorf("%v failed to fetch resource from kubernetes: %w", manifest, err)
+	}
+
+	// Set response wrapper
+	response := yaml.NewFromUnstructured(rawResponse)
+
+	// Update computed values
+	model.APIVersion = types.StringValue(response.GetAPIVersion())
+	model.Kind = types.StringValue(response.GetKind())
+	model.Name = types.StringValue(response.GetName())
+	
+	if response.HasNamespace() {
+		model.Namespace = types.StringValue(response.GetNamespace())
+	} else {
+		model.Namespace = types.StringNull()
+	}
+
+	// Update UID fields
+	model.LiveUID = types.StringValue(string(response.GetUID()))
+	
+	// If UID is not set, initialize it (for imports)
+	if model.UID.IsNull() || model.UID.IsUnknown() {
+		model.UID = types.StringValue(string(response.GetUID()))
+	}
+
+	log.Printf("[DEBUG] %v read successfully", manifest)
+
+	// TODO: Generate fingerprints for drift detection (yaml_incluster, live_manifest_incluster)
+	
+	return nil
 }
 
 func (r *manifestResource) deleteManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	// TODO: Implement manifest delete logic
-	// - Parse YAML
-	// - Get REST client
-	// - Delete with appropriate cascade mode
-	// - Wait if specified
-	return fmt.Errorf("deleteManifest not yet implemented")
+	yamlBody := model.YAMLBody.ValueString()
+
+	// Parse YAML
+	manifest, err := yaml.ParseYAML(yamlBody)
+	if err != nil {
+		return fmt.Errorf("failed to parse kubernetes resource: %w", err)
+	}
+
+	// Apply namespace override if provided
+	if !model.OverrideNamespace.IsNull() {
+		manifest.SetNamespace(model.OverrideNamespace.ValueString())
+	}
+
+	log.Printf("[INFO] %v deleting kubernetes resource", manifest)
+
+	// Create REST client for this resource type
+	restClient := util.GetRestClientFromUnstructured(
+		ctx,
+		manifest,
+		r.providerData.MainClientset,
+		r.providerData.RestConfig,
+	)
+	if restClient.Error != nil {
+		return fmt.Errorf(
+			"%v failed to create kubernetes rest client for resource: %w",
+			manifest,
+			restClient.Error,
+		)
+	}
+
+	// Determine cascade mode
+	cascadeMode := "background"
+	if !model.DeleteCascade.IsNull() {
+		cascadeMode = model.DeleteCascade.ValueString()
+	}
+
+	// Build delete options
+	deleteOptions := meta_v1.DeleteOptions{}
+	
+	switch cascadeMode {
+	case "foreground":
+		propagationPolicy := meta_v1.DeletePropagationForeground
+		deleteOptions.PropagationPolicy = &propagationPolicy
+	case "background":
+		propagationPolicy := meta_v1.DeletePropagationBackground
+		deleteOptions.PropagationPolicy = &propagationPolicy
+	case "orphan":
+		propagationPolicy := meta_v1.DeletePropagationOrphan
+		deleteOptions.PropagationPolicy = &propagationPolicy
+	default:
+		// Default to background
+		propagationPolicy := meta_v1.DeletePropagationBackground
+		deleteOptions.PropagationPolicy = &propagationPolicy
+	}
+
+	// Delete the resource
+	err = restClient.ResourceInterface.Delete(ctx, manifest.GetName(), deleteOptions)
+	if err != nil {
+		if util.IsNotFoundError(err) {
+			// Resource already deleted, not an error
+			log.Printf("[INFO] %v resource already deleted", manifest)
+			return nil
+		}
+		return fmt.Errorf("%v failed to delete resource: %w", manifest, err)
+	}
+
+	log.Printf("[INFO] %v resource deleted successfully", manifest)
+
+	// TODO: Implement wait for deletion if needed
+	
+	return nil
 }
 
 func (r *manifestResource) obfuscateSensitiveFields(
@@ -753,8 +1016,7 @@ func (r *manifestResource) obfuscateSensitiveFields(
 }
 
 func isNotFoundError(err error) bool {
-	// TODO: Check if error is Kubernetes NotFound error
-	return false
+	return util.IsNotFoundError(err)
 }
 
 // Attribute types for nested blocks

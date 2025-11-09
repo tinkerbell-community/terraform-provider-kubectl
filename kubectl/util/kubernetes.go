@@ -1,238 +1,249 @@
 package util
-package util
 
 import (
 	"bytes"
 	"context"
 	"fmt"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-}	return mapVal	mapVal, _ := types.MapValue(types.StringType, values)	}		values[k] = types.StringValue(v)	for k, v := range input {	values := make(map[string]attr.Value)	}		return types.MapNull(types.StringType)	if len(input) == 0 {func StringMapToFramework(ctx context.Context, input map[string]string) types.Map {// StringMapToFramework converts a map[string]string to a Framework types.Map}	return list	list, _ := types.ListValue(types.StringType, values)	}		values[i] = types.StringValue(v)	for i, v := range input {	values := make([]attr.Value, len(input))	}		return types.ListNull(types.StringType)	if len(input) == 0 {func StringListToFramework(ctx context.Context, input []string) types.List {// StringListToFramework converts a []string to a Framework types.List}	return defaultValue	}		return v	if v := os.Getenv(key); v != "" {func GetEnvOrDefault(key, defaultValue string) string {// GetEnvOrDefault returns the environment variable value or a default}	return filepath.Join(parentDir, safeHost)	safeHost := overlyCautiousIllegalFileCharacters.ReplaceAllString(schemelessHost, "_")	schemelessHost := strings.Replace(strings.Replace(host, "https://", "", 1), "http://", "", 1)func ComputeDiscoverCacheDir(parentDir, host string) string {var overlyCautiousIllegalFileCharacters = regexp.MustCompile(`[^(\w/\.)]`)// ComputeDiscoverCacheDir takes the parentDir and the host and comes up with a "usually non-colliding" name}	Args       types.List   `tfsdk:"args"`	Env        types.Map    `tfsdk:"env"`	Command    types.String `tfsdk:"command"`	APIVersion types.String `tfsdk:"api_version"`type ExecConfigData struct {// ExecConfigData represents exec authentication configuration}	Exec                  types.List	TLSServerName         types.String	LoadConfigFile        types.Bool	ProxyURL              types.String	Token                 types.String	ConfigContextCluster  types.String	ConfigContextAuthInfo types.String	ConfigContext         types.String	ConfigPaths           types.List	ConfigPath            types.String	ClusterCACertificate  types.String	ClientKey             types.String	ClientCertificate     types.String	Insecure              types.Bool	Password              types.String	Username              types.String	Host                  types.Stringtype ConfigData struct {// ConfigData represents the provider configuration data for Kubernetes initialization}	return cfg, nil	}		return nil, fmt.Errorf("failed to load kubernetes config: %w", err)	if err != nil {	cfg, err := cc.ClientConfig()	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, overrides)	}		overrides.ClusterInfo.TLSServerName = config.TLSServerName.ValueString()	if !config.TLSServerName.IsNull() {	}		overrides.ClusterDefaults.ProxyURL = config.ProxyURL.ValueString()	if !config.ProxyURL.IsNull() {	}		overrides.AuthInfo.Token = config.Token.ValueString()	if !config.Token.IsNull() {	}		overrides.AuthInfo.ClientKeyData = bytes.NewBufferString(config.ClientKey.ValueString()).Bytes()	if !config.ClientKey.IsNull() {	}		overrides.AuthInfo.Password = config.Password.ValueString()	if !config.Password.IsNull() {	}		overrides.AuthInfo.Username = config.Username.ValueString()	if !config.Username.IsNull() {	}		overrides.ClusterInfo.Server = host.String()		}			return nil, fmt.Errorf("failed to parse host: %w", err)		if err != nil {		host, _, err := restclient.DefaultServerURL(config.Host.ValueString(), "", apimachineryschema.GroupVersion{}, defaultTLS)		defaultTLS := hasCA || hasCert || overrides.ClusterInfo.InsecureSkipTLSVerify		hasCert := len(overrides.AuthInfo.ClientCertificateData) != 0		hasCA := len(overrides.ClusterInfo.CertificateAuthorityData) != 0	if !config.Host.IsNull() {	}		overrides.AuthInfo.ClientCertificateData = bytes.NewBufferString(config.ClientCertificate.ValueString()).Bytes()	if !config.ClientCertificate.IsNull() {	}		overrides.ClusterInfo.CertificateAuthorityData = bytes.NewBufferString(config.ClusterCACertificate.ValueString()).Bytes()	if !config.ClusterCACertificate.IsNull() {	}		overrides.ClusterInfo.InsecureSkipTLSVerify = config.Insecure.ValueBool()	if !config.Insecure.IsNull() {	// Apply static configuration overrides	}		}			overrides.Context.Cluster = config.ConfigContextCluster.ValueString()		if !config.ConfigContextCluster.IsNull() {		}			overrides.Context.AuthInfo = config.ConfigContextAuthInfo.ValueString()		if !config.ConfigContextAuthInfo.IsNull() {		overrides.Context = clientcmdapi.Context{}		}			overrides.CurrentContext = config.ConfigContext.ValueString()		if !config.ConfigContext.IsNull() {		// Handle context overrides		}			loader.Precedence = expandedPaths		} else {			loader.ExplicitPath = expandedPaths[0]		if len(expandedPaths) == 1 {		}			expandedPaths = append(expandedPaths, path)			}				return nil, err			if err != nil {			path, err := homedir.Expand(p)		for _, p := range configPaths {		expandedPaths := []string{}		// Load kubeconfig files	} else if !config.LoadConfigFile.IsNull() && config.LoadConfigFile.ValueBool() && len(configPaths) > 0 {		}			overrides.AuthInfo.Exec = exec			}				}					}						exec.Env = append(exec.Env, clientcmdapi.ExecEnvVar{Name: k, Value: v})					for k, v := range envMap {				if !diags.HasError() {				diags := execConfig.Env.ElementsAs(ctx, &envMap, false)				var envMap map[string]string			if !execConfig.Env.IsNull() && !execConfig.Env.IsUnknown() {			// Handle env			}				}					exec.Args = args				if !diags.HasError() {				diags := execConfig.Args.ElementsAs(ctx, &args, false)				var args []string			if !execConfig.Args.IsNull() && !execConfig.Args.IsUnknown() {			// Handle args			}				exec.Command = execConfig.Command.ValueString()			if !execConfig.Command.IsNull() {			}				exec.APIVersion = execConfig.APIVersion.ValueString()			if !execConfig.APIVersion.IsNull() {			}				InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,			exec := &clientcmdapi.ExecConfig{			execConfig := execConfigs[0]		if !diags.HasError() && len(execConfigs) > 0 {		diags := config.Exec.ElementsAs(ctx, &execConfigs, false)		var execConfigs []ExecConfigData	if !config.Exec.IsNull() && !config.Exec.IsUnknown() {	// Handle exec authentication	}		configPaths = filepath.SplitList(v)	} else if v := os.Getenv("KUBE_CONFIG_PATHS"); v != "" {		}			configPaths = paths		if !diags.HasError() && len(paths) > 0 {		diags := config.ConfigPaths.ElementsAs(ctx, &paths, false)		var paths []string		// Handle config_paths	} else if !config.ConfigPaths.IsNull() && !config.ConfigPaths.IsUnknown() {		configPaths = []string{config.ConfigPath.ValueString()}	if !config.ConfigPath.IsNull() && !config.ConfigPath.IsUnknown() {	// Handle config_path	var configPaths []string	loader := &clientcmd.ClientConfigLoadingRules{}	overrides := &clientcmd.ConfigOverrides{}func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclient.Config, error) {// This is adapted from the SDK v2 version to work with Plugin Framework types// InitializeConfiguration creates a Kubernetes REST config from provider configuration)	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"	"k8s.io/client-go/tools/clientcmd"	restclient "k8s.io/client-go/rest"	apimachineryschema "k8s.io/apimachinery/pkg/runtime/schema"	"github.com/mitchellh/go-homedir"	"github.com/hashicorp/terraform-plugin-framework/types"	"github.com/hashicorp/terraform-plugin-framework/attr"	"strings"	"regexp"	"path/filepath"	"os"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/mitchellh/go-homedir"
+	apimachineryschema "k8s.io/apimachinery/pkg/runtime/schema"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+)
+
+// ConfigData represents the provider configuration data for Kubernetes initialization
+type ConfigData struct {
+	Host                  types.String
+	Username              types.String
+	Password              types.String
+	Insecure              types.Bool
+	ClientCertificate     types.String
+	ClientKey             types.String
+	ClusterCACertificate  types.String
+	ConfigPath            types.String
+	ConfigPaths           types.List
+	ConfigContext         types.String
+	ConfigContextAuthInfo types.String
+	ConfigContextCluster  types.String
+	Token                 types.String
+	ProxyURL              types.String
+	LoadConfigFile        types.Bool
+	TLSServerName         types.String
+	Exec                  types.List
+}
+
+// ExecConfigData represents exec authentication configuration
+type ExecConfigData struct {
+	APIVersion types.String `tfsdk:"api_version"`
+	Command    types.String `tfsdk:"command"`
+	Env        types.Map    `tfsdk:"env"`
+	Args       types.List   `tfsdk:"args"`
+}
+
+// InitializeConfiguration creates a Kubernetes REST config from provider configuration
+// This is adapted from the SDK v2 version to work with Plugin Framework types
+func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclient.Config, error) {
+	overrides := &clientcmd.ConfigOverrides{}
+	loader := &clientcmd.ClientConfigLoadingRules{}
+
+	// Handle config_path
+	var configPaths []string
+	if !config.ConfigPath.IsNull() && !config.ConfigPath.IsUnknown() {
+		configPaths = []string{config.ConfigPath.ValueString()}
+	} else if !config.ConfigPaths.IsNull() && !config.ConfigPaths.IsUnknown() {
+		// Handle config_paths
+		var paths []string
+		diags := config.ConfigPaths.ElementsAs(ctx, &paths, false)
+		if !diags.HasError() && len(paths) > 0 {
+			configPaths = paths
+		}
+	} else if v := os.Getenv("KUBE_CONFIG_PATHS"); v != "" {
+		configPaths = filepath.SplitList(v)
+	}
+
+	// Handle exec authentication
+	if !config.Exec.IsNull() && !config.Exec.IsUnknown() {
+		var execConfigs []ExecConfigData
+		diags := config.Exec.ElementsAs(ctx, &execConfigs, false)
+		if !diags.HasError() && len(execConfigs) > 0 {
+			execConfig := execConfigs[0]
+			exec := &clientcmdapi.ExecConfig{
+				InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
+			}
+
+			if !execConfig.APIVersion.IsNull() {
+				exec.APIVersion = execConfig.APIVersion.ValueString()
+			}
+
+			if !execConfig.Command.IsNull() {
+				exec.Command = execConfig.Command.ValueString()
+			}
+
+			// Handle args
+			if !execConfig.Args.IsNull() && !execConfig.Args.IsUnknown() {
+				var args []string
+				diags := execConfig.Args.ElementsAs(ctx, &args, false)
+				if !diags.HasError() {
+					exec.Args = args
+				}
+			}
+
+			// Handle env
+			if !execConfig.Env.IsNull() && !execConfig.Env.IsUnknown() {
+				var envMap map[string]string
+				diags := execConfig.Env.ElementsAs(ctx, &envMap, false)
+				if !diags.HasError() {
+					for k, v := range envMap {
+						exec.Env = append(exec.Env, clientcmdapi.ExecEnvVar{Name: k, Value: v})
+					}
+				}
+			}
+
+			overrides.AuthInfo.Exec = exec
+		}
+	} else if !config.LoadConfigFile.IsNull() && config.LoadConfigFile.ValueBool() && len(configPaths) > 0 {
+		// Load kubeconfig files
+		expandedPaths := []string{}
+		for _, p := range configPaths {
+			path, err := homedir.Expand(p)
+			if err != nil {
+				return nil, err
+			}
+			expandedPaths = append(expandedPaths, path)
+		}
+
+		if len(expandedPaths) == 1 {
+			loader.ExplicitPath = expandedPaths[0]
+		} else {
+			loader.Precedence = expandedPaths
+		}
+
+		// Handle context overrides
+		if !config.ConfigContext.IsNull() && !config.ConfigContext.IsUnknown() {
+			overrides.CurrentContext = config.ConfigContext.ValueString()
+		}
+
+		if !config.ConfigContextAuthInfo.IsNull() && !config.ConfigContextAuthInfo.IsUnknown() {
+			overrides.Context = clientcmdapi.Context{}
+			overrides.Context.AuthInfo = config.ConfigContextAuthInfo.ValueString()
+		}
+
+		if !config.ConfigContextCluster.IsNull() && !config.ConfigContextCluster.IsUnknown() {
+			if overrides.Context.AuthInfo == "" {
+				overrides.Context = clientcmdapi.Context{}
+			}
+			overrides.Context.Cluster = config.ConfigContextCluster.ValueString()
+		}
+	}
+
+	// Apply static configuration overrides
+	if !config.Insecure.IsNull() {
+		overrides.ClusterInfo.InsecureSkipTLSVerify = config.Insecure.ValueBool()
+	}
+
+	if !config.ClusterCACertificate.IsNull() {
+		overrides.ClusterInfo.CertificateAuthorityData = bytes.NewBufferString(config.ClusterCACertificate.ValueString()).Bytes()
+	}
+
+	if !config.ClientCertificate.IsNull() {
+		overrides.AuthInfo.ClientCertificateData = bytes.NewBufferString(config.ClientCertificate.ValueString()).Bytes()
+	}
+
+	if !config.Host.IsNull() {
+		hasCA := len(overrides.ClusterInfo.CertificateAuthorityData) != 0
+		hasCert := len(overrides.AuthInfo.ClientCertificateData) != 0
+		defaultTLS := hasCA || hasCert || overrides.ClusterInfo.InsecureSkipTLSVerify
+		host, _, err := restclient.DefaultServerURL(config.Host.ValueString(), "", apimachineryschema.GroupVersion{}, defaultTLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse host: %w", err)
+		}
+
+		overrides.ClusterInfo.Server = host.String()
+	}
+
+	if !config.Username.IsNull() {
+		overrides.AuthInfo.Username = config.Username.ValueString()
+	}
+
+	if !config.Password.IsNull() {
+		overrides.AuthInfo.Password = config.Password.ValueString()
+	}
+
+	if !config.ClientKey.IsNull() {
+		overrides.AuthInfo.ClientKeyData = bytes.NewBufferString(config.ClientKey.ValueString()).Bytes()
+	}
+
+	if !config.Token.IsNull() {
+		overrides.AuthInfo.Token = config.Token.ValueString()
+	}
+
+	if !config.ProxyURL.IsNull() {
+		overrides.ClusterDefaults.ProxyURL = config.ProxyURL.ValueString()
+	}
+
+	if !config.TLSServerName.IsNull() {
+		overrides.ClusterInfo.TLSServerName = config.TLSServerName.ValueString()
+	}
+
+	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, overrides)
+	cfg, err := cc.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubernetes config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// ComputeDiscoverCacheDir takes the parentDir and the host and comes up with a "usually non-colliding" name
+var overlyCautiousIllegalFileCharacters = regexp.MustCompile(`[^(\w/\.)]`)
+
+func ComputeDiscoverCacheDir(parentDir, host string) string {
+	schemelessHost := strings.Replace(strings.Replace(host, "https://", "", 1), "http://", "", 1)
+	safeHost := overlyCautiousIllegalFileCharacters.ReplaceAllString(schemelessHost, "_")
+	return filepath.Join(parentDir, safeHost)
+}
+
+// GetEnvOrDefault returns the environment variable value or a default
+func GetEnvOrDefault(key, defaultValue string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultValue
+}
+
+// StringListToFramework converts a []string to a Framework types.List
+func StringListToFramework(ctx context.Context, input []string) types.List {
+	if len(input) == 0 {
+		return types.ListNull(types.StringType)
+	}
+
+	values := make([]attr.Value, len(input))
+	for i, v := range input {
+		values[i] = types.StringValue(v)
+	}
+
+	list, _ := types.ListValue(types.StringType, values)
+	return list
+}
+
+// StringMapToFramework converts a map[string]string to a Framework types.Map
+func StringMapToFramework(ctx context.Context, input map[string]string) types.Map {
+	if len(input) == 0 {
+		return types.MapNull(types.StringType)
+	}
+
+	values := make(map[string]attr.Value)
+	for k, v := range input {
+		values[k] = types.StringValue(v)
+	}
+
+	mapVal, _ := types.MapValue(types.StringType, values)
+	return mapVal
+}

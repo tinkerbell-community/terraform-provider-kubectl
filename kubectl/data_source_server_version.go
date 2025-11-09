@@ -132,9 +132,6 @@ func (d *serverVersionDataSource) Read(
 	// Get discovery client
 	discoveryClient := d.providerData.MainClientset.Discovery()
 
-	// Invalidate cache to get fresh version info
-	discoveryClient.Invalidate()
-
 	// Get server version
 	serverVersion, err := discoveryClient.ServerVersion()
 	if err != nil {
