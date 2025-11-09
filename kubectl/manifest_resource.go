@@ -896,6 +896,15 @@ func (r *manifestResource) applyManifest(
 	model.UID = types.StringValue(string(response.GetUID()))
 	model.LiveUID = types.StringValue(string(response.GetUID()))
 
+	// Set yaml_body_parsed with obfuscated sensitive fields
+	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, response, model.SensitiveFields)
+	if err == nil {
+		yamlStr, err := obfuscatedYaml.AsYAML()
+		if err == nil {
+			model.YAMLBodyParsed = types.StringValue(yamlStr)
+		}
+	}
+
 	log.Printf("[DEBUG] %v fetched successfully, set id to: %v", manifest, model.ID.ValueString())
 
 	// Handle wait_for_rollout if specified
@@ -1071,6 +1080,21 @@ func (r *manifestResource) readManifest(
 	fingerprint := r.generateFingerprints(ctx, manifest, rawResponse, model)
 	model.YAMLInCluster = types.StringValue(fingerprint)
 	model.LiveManifestInCluster = types.StringValue(fingerprint)
+
+	// Set yaml_body_parsed with obfuscated sensitive fields
+	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, response, model.SensitiveFields)
+	if err == nil {
+		yamlStr, err := obfuscatedYaml.AsYAML()
+		if err == nil {
+			model.YAMLBodyParsed = types.StringValue(yamlStr)
+		} else {
+			// Fallback to empty string if YAML conversion fails
+			model.YAMLBodyParsed = types.StringValue("")
+		}
+	} else {
+		// Fallback to empty string if obfuscation fails
+		model.YAMLBodyParsed = types.StringValue("")
+	}
 
 	return nil
 }
