@@ -2,9 +2,13 @@ package kubectl
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,9 +27,15 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/alekc/terraform-provider-kubectl/flatten"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/alekc/terraform-provider-kubectl/yaml"
+	"github.com/thedevsaddam/gojsonq/v2"
+	apps_v1 "k8s.io/api/apps/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces
@@ -43,31 +53,31 @@ type manifestResource struct {
 
 // manifestResourceModel describes the resource data model
 type manifestResourceModel struct {
-	ID                     types.String   `tfsdk:"id"`
-	UID                    types.String   `tfsdk:"uid"`
-	LiveUID                types.String   `tfsdk:"live_uid"`
-	YAMLInCluster          types.String   `tfsdk:"yaml_incluster"`
-	LiveManifestInCluster  types.String   `tfsdk:"live_manifest_incluster"`
-	APIVersion             types.String   `tfsdk:"api_version"`
-	Kind                   types.String   `tfsdk:"kind"`
-	Name                   types.String   `tfsdk:"name"`
-	Namespace              types.String   `tfsdk:"namespace"`
-	OverrideNamespace      types.String   `tfsdk:"override_namespace"`
-	YAMLBody               types.String   `tfsdk:"yaml_body"`
-	YAMLBodyParsed         types.String   `tfsdk:"yaml_body_parsed"`
-	SensitiveFields        types.List     `tfsdk:"sensitive_fields"`
-	ForceNew               types.Bool     `tfsdk:"force_new"`
-	ServerSideApply        types.Bool     `tfsdk:"server_side_apply"`
-	FieldManager           types.String   `tfsdk:"field_manager"`
-	ForceConflicts         types.Bool     `tfsdk:"force_conflicts"`
-	ApplyOnly              types.Bool     `tfsdk:"apply_only"`
-	IgnoreFields           types.List     `tfsdk:"ignore_fields"`
-	Wait                   types.Bool     `tfsdk:"wait"`
-	WaitForRollout         types.Bool     `tfsdk:"wait_for_rollout"`
-	ValidateSchema         types.Bool     `tfsdk:"validate_schema"`
-	WaitFor                types.List     `tfsdk:"wait_for"`
-	DeleteCascade          types.String   `tfsdk:"delete_cascade"`
-	Timeouts               timeouts.Value `tfsdk:"timeouts"`
+	ID                    types.String   `tfsdk:"id"`
+	UID                   types.String   `tfsdk:"uid"`
+	LiveUID               types.String   `tfsdk:"live_uid"`
+	YAMLInCluster         types.String   `tfsdk:"yaml_incluster"`
+	LiveManifestInCluster types.String   `tfsdk:"live_manifest_incluster"`
+	APIVersion            types.String   `tfsdk:"api_version"`
+	Kind                  types.String   `tfsdk:"kind"`
+	Name                  types.String   `tfsdk:"name"`
+	Namespace             types.String   `tfsdk:"namespace"`
+	OverrideNamespace     types.String   `tfsdk:"override_namespace"`
+	YAMLBody              types.String   `tfsdk:"yaml_body"`
+	YAMLBodyParsed        types.String   `tfsdk:"yaml_body_parsed"`
+	SensitiveFields       types.List     `tfsdk:"sensitive_fields"`
+	ForceNew              types.Bool     `tfsdk:"force_new"`
+	ServerSideApply       types.Bool     `tfsdk:"server_side_apply"`
+	FieldManager          types.String   `tfsdk:"field_manager"`
+	ForceConflicts        types.Bool     `tfsdk:"force_conflicts"`
+	ApplyOnly             types.Bool     `tfsdk:"apply_only"`
+	IgnoreFields          types.List     `tfsdk:"ignore_fields"`
+	Wait                  types.Bool     `tfsdk:"wait"`
+	WaitForRollout        types.Bool     `tfsdk:"wait_for_rollout"`
+	ValidateSchema        types.Bool     `tfsdk:"validate_schema"`
+	WaitFor               types.List     `tfsdk:"wait_for"`
+	DeleteCascade         types.String   `tfsdk:"delete_cascade"`
+	Timeouts              timeouts.Value `tfsdk:"timeouts"`
 }
 
 // waitForModel describes the wait_for block
@@ -692,6 +702,38 @@ func (r *manifestResource) ModifyPlan(
 		}
 	}
 
+	// Enhanced cluster read for better drift detection
+	// Read from cluster to compare critical fields that might require replacement
+	restClient := util.GetRestClientFromUnstructured(
+		ctx,
+		parsedYaml,
+		r.providerData.MainClientset,
+		r.providerData.RestConfig,
+	)
+	if restClient.Error == nil {
+		// Try to read current state from cluster
+		liveResource, err := restClient.ResourceInterface.Get(
+			ctx,
+			parsedYaml.GetName(),
+			meta_v1.GetOptions{},
+		)
+		if err == nil {
+			// Check if immutable fields changed (like some labels, annotations patterns)
+			// For now, we primarily rely on force_new flag and UID drift
+			log.Printf("[TRACE] Successfully read live resource %s for plan comparison", parsedYaml.GetSelfLink())
+			
+			// Store live UID for comparison
+			if liveUID := string(liveResource.GetUID()); liveUID != "" {
+				if !state.UID.IsNull() && state.UID.ValueString() != liveUID {
+					log.Printf("[TRACE] Resource UID mismatch detected, may require replacement")
+					resp.RequiresReplace = append(resp.RequiresReplace, path.Root("yaml_body"))
+				}
+			}
+		} else if !util.IsNotFoundError(err) {
+			log.Printf("[DEBUG] Could not read live resource during plan: %v", err)
+		}
+	}
+
 	// Detect manifest drift
 	if !state.YAMLInCluster.IsNull() && !state.LiveManifestInCluster.IsNull() {
 		if !state.YAMLInCluster.Equal(state.LiveManifestInCluster) {
@@ -836,7 +878,7 @@ func (r *manifestResource) applyManifest(
 	model.APIVersion = types.StringValue(response.GetAPIVersion())
 	model.Kind = types.StringValue(response.GetKind())
 	model.Name = types.StringValue(response.GetName())
-	
+
 	if response.HasNamespace() {
 		model.Namespace = types.StringValue(response.GetNamespace())
 	} else {
@@ -848,8 +890,77 @@ func (r *manifestResource) applyManifest(
 
 	log.Printf("[DEBUG] %v fetched successfully, set id to: %v", manifest, model.ID.ValueString())
 
-	// TODO: Handle wait_for_rollout if specified
-	// TODO: Handle wait_for conditions if specified
+	// Handle wait_for_rollout if specified
+	if !model.WaitForRollout.IsNull() && model.WaitForRollout.ValueBool() {
+		createTimeout, diags := model.Timeouts.Create(ctx, 10*time.Minute)
+		if diags.HasError() {
+			return fmt.Errorf("failed to get create timeout: %v", diags)
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, createTimeout)
+		defer cancel()
+
+		log.Printf("[INFO] %v waiting for rollout", manifest)
+
+		switch manifest.GetKind() {
+		case "Deployment":
+			err = r.waitForDeployment(timeoutCtx, manifest.GetNamespace(), manifest.GetName(), createTimeout)
+		case "StatefulSet":
+			err = r.waitForStatefulSet(timeoutCtx, manifest.GetNamespace(), manifest.GetName(), createTimeout)
+		case "DaemonSet":
+			err = r.waitForDaemonSet(timeoutCtx, manifest.GetNamespace(), manifest.GetName(), createTimeout)
+		default:
+			log.Printf("[WARN] wait_for_rollout not supported for kind %s", manifest.GetKind())
+		}
+
+		if err != nil {
+			return fmt.Errorf("%v failed to wait for rollout: %w", manifest, err)
+		}
+
+		log.Printf("[INFO] %v rollout complete", manifest)
+	}
+
+	// Handle wait_for conditions if specified
+	if !model.WaitFor.IsNull() && !model.WaitFor.IsUnknown() {
+		var waitForList []waitForModel
+		diags := model.WaitFor.ElementsAs(ctx, &waitForList, false)
+		if diags.HasError() || len(waitForList) == 0 {
+			return fmt.Errorf("failed to parse wait_for block")
+		}
+
+		waitFor := waitForList[0]
+
+		// Extract conditions and fields
+		var conditions []waitConditionModel
+		var fields []waitFieldModel
+		if !waitFor.Conditions.IsNull() {
+			waitFor.Conditions.ElementsAs(ctx, &conditions, false)
+		}
+		if !waitFor.Fields.IsNull() {
+			waitFor.Fields.ElementsAs(ctx, &fields, false)
+		}
+
+		if len(conditions) == 0 && len(fields) == 0 {
+			return fmt.Errorf("wait_for block requires at least one condition or field")
+		}
+
+		createTimeout, diags := model.Timeouts.Create(ctx, 10*time.Minute)
+		if diags.HasError() {
+			return fmt.Errorf("failed to get create timeout: %v", diags)
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, createTimeout)
+		defer cancel()
+
+		log.Printf("[INFO] %v waiting for conditions", manifest)
+
+		err = r.waitForConditions(timeoutCtx, restClient, conditions, fields, manifest.GetName(), createTimeout)
+		if err != nil {
+			return fmt.Errorf("%v failed to wait for conditions: %w", manifest, err)
+		}
+
+		log.Printf("[INFO] %v conditions met", manifest)
+	}
 
 	return nil
 }
@@ -905,7 +1016,7 @@ func (r *manifestResource) readManifest(
 	model.APIVersion = types.StringValue(response.GetAPIVersion())
 	model.Kind = types.StringValue(response.GetKind())
 	model.Name = types.StringValue(response.GetName())
-	
+
 	if response.HasNamespace() {
 		model.Namespace = types.StringValue(response.GetNamespace())
 	} else {
@@ -914,7 +1025,7 @@ func (r *manifestResource) readManifest(
 
 	// Update UID fields
 	model.LiveUID = types.StringValue(string(response.GetUID()))
-	
+
 	// If UID is not set, initialize it (for imports)
 	if model.UID.IsNull() || model.UID.IsUnknown() {
 		model.UID = types.StringValue(string(response.GetUID()))
@@ -922,8 +1033,11 @@ func (r *manifestResource) readManifest(
 
 	log.Printf("[DEBUG] %v read successfully", manifest)
 
-	// TODO: Generate fingerprints for drift detection (yaml_incluster, live_manifest_incluster)
-	
+	// Generate fingerprints for drift detection
+	fingerprint := r.generateFingerprints(ctx, manifest, rawResponse, model)
+	model.YAMLInCluster = types.StringValue(fingerprint)
+	model.LiveManifestInCluster = types.StringValue(fingerprint)
+
 	return nil
 }
 
@@ -969,7 +1083,7 @@ func (r *manifestResource) deleteManifest(
 
 	// Build delete options
 	deleteOptions := meta_v1.DeleteOptions{}
-	
+
 	switch cascadeMode {
 	case "foreground":
 		propagationPolicy := meta_v1.DeletePropagationForeground
@@ -999,8 +1113,50 @@ func (r *manifestResource) deleteManifest(
 
 	log.Printf("[INFO] %v resource deleted successfully", manifest)
 
-	// TODO: Implement wait for deletion if needed
-	
+	// Wait for deletion if wait is enabled (default true for safety with finalizers)
+	// This ensures resources with finalizers are fully deleted before returning
+	waitForDeletion := true
+	if !model.Wait.IsNull() {
+		waitForDeletion = model.Wait.ValueBool()
+	}
+
+	if waitForDeletion {
+		// Get timeout for deletion (default 5 minutes)
+		deleteTimeout, diags := model.Timeouts.Delete(ctx, 5*time.Minute)
+		if diags.HasError() {
+			// Don't fail on timeout parse error, deletion already initiated
+			log.Printf("[WARN] Could not parse delete timeout, using 5 minute default")
+			deleteTimeout = 5 * time.Minute
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, deleteTimeout)
+		defer cancel()
+
+		log.Printf("[DEBUG] Waiting for %v to be fully deleted (timeout: %v)", manifest, deleteTimeout)
+
+		// Poll until resource is NotFound
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-timeoutCtx.Done():
+				log.Printf("[WARN] Timeout waiting for %v deletion, but delete was initiated", manifest)
+				return nil // Don't fail, deletion was initiated
+			case <-ticker.C:
+				_, err := restClient.ResourceInterface.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
+				if util.IsNotFoundError(err) {
+					log.Printf("[INFO] %v confirmed deleted", manifest)
+					return nil
+				}
+				if err != nil {
+					log.Printf("[DEBUG] Error checking deletion status: %v", err)
+				}
+				log.Printf("[TRACE] %v still exists, waiting for deletion...", manifest)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -1039,4 +1195,418 @@ var waitForAttrTypes = map[string]attr.Type{
 			},
 		},
 	},
+}
+
+// Helper methods for waiting on resource rollouts
+
+func (r *manifestResource) waitForDeployment(
+	ctx context.Context,
+	namespace string,
+	name string,
+	timeout time.Duration,
+) error {
+	// Borrowed from: https://github.com/kubernetes/kubectl/blob/c4be63c54b7188502c1a63bb884a0b05fac51ebd/pkg/polymorphichelpers/rollout_status.go#L70
+
+	timeoutSeconds := int64(timeout.Seconds())
+
+	watcher, err := r.providerData.MainClientset.AppsV1().Deployments(namespace).Watch(
+		ctx,
+		meta_v1.ListOptions{
+			Watch:          true,
+			TimeoutSeconds: &timeoutSeconds,
+			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	defer watcher.Stop()
+
+	done := false
+	for !done {
+		select {
+		case event := <-watcher.ResultChan():
+			if event.Type == watch.Modified {
+				deployment, ok := event.Object.(*apps_v1.Deployment)
+				if !ok {
+					return fmt.Errorf("%s could not cast to Deployment", name)
+				}
+
+				if deployment.Generation <= deployment.Status.ObservedGeneration {
+					// Check if replicas are ready
+					if deployment.Spec.Replicas != nil {
+						if deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
+							continue
+						}
+						if deployment.Status.Replicas > deployment.Status.UpdatedReplicas {
+							continue
+						}
+						if deployment.Status.AvailableReplicas < deployment.Status.UpdatedReplicas {
+							continue
+						}
+					}
+
+					done = true
+				}
+			}
+
+		case <-ctx.Done():
+			return fmt.Errorf("%s failed to rollout Deployment within timeout", name)
+		}
+	}
+
+	return nil
+}
+
+func (r *manifestResource) waitForStatefulSet(
+	ctx context.Context,
+	namespace string,
+	name string,
+	timeout time.Duration,
+) error {
+	// Borrowed from: https://github.com/kubernetes/kubectl/blob/c4be63c54b7188502c1a63bb884a0b05fac51ebd/pkg/polymorphichelpers/rollout_status.go#L120
+
+	timeoutSeconds := int64(timeout.Seconds())
+
+	watcher, err := r.providerData.MainClientset.AppsV1().StatefulSets(namespace).Watch(
+		ctx,
+		meta_v1.ListOptions{
+			Watch:          true,
+			TimeoutSeconds: &timeoutSeconds,
+			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	defer watcher.Stop()
+
+	done := false
+	for !done {
+		select {
+		case event := <-watcher.ResultChan():
+			if event.Type == watch.Modified {
+				sts, ok := event.Object.(*apps_v1.StatefulSet)
+				if !ok {
+					return fmt.Errorf("%s could not cast to StatefulSet", name)
+				}
+
+				if sts.Spec.UpdateStrategy.Type != apps_v1.RollingUpdateStatefulSetStrategyType {
+					done = true
+					continue
+				}
+
+				if sts.Status.ObservedGeneration == 0 || sts.Generation > sts.Status.ObservedGeneration {
+					continue
+				}
+
+				if sts.Spec.Replicas != nil && sts.Status.ReadyReplicas < *sts.Spec.Replicas {
+					continue
+				}
+
+				if sts.Spec.UpdateStrategy.Type == apps_v1.RollingUpdateStatefulSetStrategyType &&
+					sts.Spec.UpdateStrategy.RollingUpdate != nil {
+					if sts.Spec.Replicas != nil && sts.Spec.UpdateStrategy.RollingUpdate.Partition != nil {
+						if sts.Status.UpdatedReplicas < (*sts.Spec.Replicas - *sts.Spec.UpdateStrategy.RollingUpdate.Partition) {
+							continue
+						}
+					}
+
+					done = true
+					continue
+				}
+
+				if sts.Status.UpdateRevision != sts.Status.CurrentRevision {
+					continue
+				}
+
+				done = true
+			}
+
+		case <-ctx.Done():
+			return fmt.Errorf("%s failed to rollout StatefulSet within timeout", name)
+		}
+	}
+
+	return nil
+}
+
+func (r *manifestResource) waitForDaemonSet(
+	ctx context.Context,
+	namespace string,
+	name string,
+	timeout time.Duration,
+) error {
+	// Borrowed from: https://github.com/kubernetes/kubectl/blob/c4be63c54b7188502c1a63bb884a0b05fac51ebd/pkg/polymorphichelpers/rollout_status.go#L95
+
+	timeoutSeconds := int64(timeout.Seconds())
+
+	watcher, err := r.providerData.MainClientset.AppsV1().DaemonSets(namespace).Watch(
+		ctx,
+		meta_v1.ListOptions{
+			Watch:          true,
+			TimeoutSeconds: &timeoutSeconds,
+			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	defer watcher.Stop()
+
+	done := false
+	for !done {
+		select {
+		case event := <-watcher.ResultChan():
+			if event.Type == watch.Modified {
+				daemon, ok := event.Object.(*apps_v1.DaemonSet)
+				if !ok {
+					return fmt.Errorf("%s could not cast to DaemonSet", name)
+				}
+
+				if daemon.Spec.UpdateStrategy.Type != apps_v1.RollingUpdateDaemonSetStrategyType {
+					done = true
+					continue
+				}
+
+				if daemon.Generation <= daemon.Status.ObservedGeneration {
+					if daemon.Status.UpdatedNumberScheduled < daemon.Status.DesiredNumberScheduled {
+						continue
+					}
+
+					if daemon.Status.NumberAvailable < daemon.Status.DesiredNumberScheduled {
+						continue
+					}
+
+					done = true
+				}
+			}
+
+		case <-ctx.Done():
+			return fmt.Errorf("%s failed to rollout DaemonSet within timeout", name)
+		}
+	}
+
+	return nil
+}
+
+func (r *manifestResource) waitForConditions(
+	ctx context.Context,
+	restClient *util.RestClientResult,
+	conditions []waitConditionModel,
+	waitFields []waitFieldModel,
+	name string,
+	timeout time.Duration,
+) error {
+	timeoutSeconds := int64(timeout.Seconds())
+
+	watcher, err := restClient.ResourceInterface.Watch(
+		ctx,
+		meta_v1.ListOptions{
+			Watch:          true,
+			TimeoutSeconds: &timeoutSeconds,
+			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	defer watcher.Stop()
+
+	done := false
+	for !done {
+		select {
+		case event := <-watcher.ResultChan():
+			log.Printf("[TRACE] Received event type %s for %s", event.Type, name)
+			if event.Type == watch.Modified || event.Type == watch.Added {
+				rawResponse, ok := event.Object.(*meta_v1_unstruct.Unstructured)
+				if !ok {
+					return fmt.Errorf("%s could not cast resource to unstructured", name)
+				}
+
+				totalConditions := len(conditions) + len(waitFields)
+				totalMatches := 0
+
+				yamlJson, err := rawResponse.MarshalJSON()
+				if err != nil {
+					return err
+				}
+
+				gq := gojsonq.New().FromString(string(yamlJson))
+
+				// Check conditions
+				for _, c := range conditions {
+					condType := c.Type.ValueString()
+					condStatus := c.Status.ValueString()
+
+					// Find the conditions by status and type
+					count := gq.Reset().From("status.conditions").
+						Where("type", "=", condType).
+						Where("status", "=", condStatus).Count()
+					if count == 0 {
+						log.Printf("[TRACE] Condition %s with status %s not found in %s", condType, condStatus, name)
+						continue
+					}
+					log.Printf("[TRACE] Condition %s with status %s found in %s", condType, condStatus, name)
+					totalMatches++
+				}
+
+				// Check fields
+				for _, f := range waitFields {
+					key := f.Key.ValueString()
+					value := f.Value.ValueString()
+					valueType := f.ValueType.ValueString()
+					if valueType == "" {
+						valueType = "eq"
+					}
+
+					// Find the key
+					v := gq.Reset().Find(key)
+					if v == nil {
+						log.Printf("[TRACE] Key %s not found in %s", key, name)
+						continue
+					}
+
+					// For the sake of comparison we will convert everything to a string
+					stringVal := fmt.Sprintf("%v", v)
+					switch valueType {
+					case "regex":
+						matched, err := regexp.Match(value, []byte(stringVal))
+						if err != nil {
+							return err
+						}
+
+						if !matched {
+							log.Printf("[TRACE] Value %s does not match regex %s in %s (key %s)", stringVal, value, name, key)
+							continue
+						}
+
+						log.Printf("[TRACE] Value %s matches regex %s in %s (key %s)", stringVal, value, name, key)
+						totalMatches++
+
+					case "eq":
+						if stringVal != value {
+							log.Printf("[TRACE] Value %s does not match %s in %s (key %s)", stringVal, value, name, key)
+							continue
+						}
+						log.Printf("[TRACE] Value %s matches %s in %s (key %s)", stringVal, value, name, key)
+						totalMatches++
+					}
+				}
+
+				if totalMatches == totalConditions {
+					log.Printf("[TRACE] All conditions met for %s", name)
+					done = true
+					continue
+				}
+				log.Printf("[TRACE] %d/%d conditions met for %s. Waiting for next event", totalMatches, totalConditions, name)
+			}
+
+		case <-ctx.Done():
+			return fmt.Errorf("%s failed to wait for resource within timeout", name)
+		}
+	}
+
+	return nil
+}
+
+// generateFingerprints creates a fingerprint of the live manifest for drift detection
+// This is based on the SDK v2 implementation in kubernetes/resource_kubectl_manifest.go
+func (r *manifestResource) generateFingerprints(
+	ctx context.Context,
+	userProvided *yaml.Manifest,
+	liveManifest *meta_v1_unstruct.Unstructured,
+	model *manifestResourceModel,
+) string {
+	// Extract ignore fields from model
+	var ignoreFields []string
+	if !model.IgnoreFields.IsNull() && !model.IgnoreFields.IsUnknown() {
+		model.IgnoreFields.ElementsAs(ctx, &ignoreFields, false)
+	}
+
+	// Handle Secret stringData special case
+	// If user provided stringData, convert it to base64-encoded data for comparison
+	if userProvided.GetKind() == "Secret" && userProvided.GetAPIVersion() == "v1" {
+		if stringData, found := userProvided.Raw.Object["stringData"]; found {
+			if stringDataMap, ok := stringData.(map[string]interface{}); ok {
+				// Move all stringData values to data as base64
+				for k, v := range stringDataMap {
+					encodedString := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%v", v)))
+					meta_v1_unstruct.SetNestedField(userProvided.Raw.Object, encodedString, "data", k)
+				}
+				// Remove stringData field
+				meta_v1_unstruct.RemoveNestedField(userProvided.Raw.Object, "stringData")
+			}
+		}
+	}
+
+	// Flatten both manifests for comparison
+	flattenedUser := flatten.Flatten(userProvided.Raw.Object)
+	flattenedLive := flatten.Flatten(liveManifest.Object)
+
+	// Remove control fields and ignore fields
+	fieldsToTrim := append(kubernetesControlFields, ignoreFields...)
+	for _, field := range fieldsToTrim {
+		delete(flattenedUser, field)
+
+		// Remove any nested fields that start with this prefix
+		for k := range flattenedUser {
+			if strings.HasPrefix(k, field+".") {
+				delete(flattenedUser, k)
+			}
+		}
+	}
+
+	// Build fingerprint from user keys with live values
+	var userKeys []string
+	for userKey, userValue := range flattenedUser {
+		normalizedUserValue := strings.TrimSpace(userValue)
+
+		// Only include if key exists in live manifest
+		if _, exists := flattenedLive[userKey]; exists {
+			userKeys = append(userKeys, userKey)
+			normalizedLiveValue := strings.TrimSpace(flattenedLive[userKey])
+			if normalizedUserValue != normalizedLiveValue {
+				log.Printf("[TRACE] yaml drift detected in %s for %s, was: %s now: %s",
+					userProvided.GetSelfLink(), userKey, normalizedUserValue, normalizedLiveValue)
+			}
+			// Hash the live value
+			flattenedUser[userKey] = getFingerprint(normalizedLiveValue)
+		} else {
+			if normalizedUserValue != "" {
+				log.Printf("[TRACE] yaml drift detected in %s for %s, was %s now blank",
+					userProvided.GetSelfLink(), userKey, normalizedUserValue)
+			}
+		}
+	}
+
+	// Sort keys for consistent fingerprint
+	sort.Strings(userKeys)
+	var returnedValues []string
+	for _, k := range userKeys {
+		returnedValues = append(returnedValues, fmt.Sprintf("%s=%s", k, flattenedUser[k]))
+	}
+
+	return strings.Join(returnedValues, "\n")
+}
+
+// getFingerprint generates a SHA256 hash of a string
+func getFingerprint(s string) string {
+	fingerprint := sha256.New()
+	fingerprint.Write([]byte(s))
+	return fmt.Sprintf("%x", fingerprint.Sum(nil))
+}
+
+// kubernetesControlFields are fields managed by Kubernetes that should be ignored in drift detection
+var kubernetesControlFields = []string{
+	"status",
+	"metadata.finalizers",
+	"metadata.initializers",
+	"metadata.ownerReferences",
+	"metadata.creationTimestamp",
+	"metadata.generation",
+	"metadata.resourceVersion",
+	"metadata.uid",
+	"metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
+	"metadata.managedFields",
 }
