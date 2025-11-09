@@ -1,55 +1,23 @@
 package kubectl_test
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	"github.com/hashicorp/terraform-plugin-mux/tf5to6server"
-	"github.com/hashicorp/terraform-plugin-mux/tf6muxserver"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-
-	"github.com/alekc/terraform-provider-kubectl/kubectl"
-	"github.com/alekc/terraform-provider-kubectl/kubernetes"
 )
 
-// testAccProtoV6ProviderFactories are used to instantiate a muxed provider during
+// testAccProtoV6ProviderFactories are used to instantiate the provider during
 // acceptance testing. The factory function will be invoked for every Terraform CLI
 // command executed to create a provider server to which the CLI can reattach.
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
-	"kubectl": func() (tfprotov6.ProviderServer, error) {
-		ctx := context.Background()
-
-		// Upgrade SDK v2 provider to protocol version 6
-		upgradedSdkServer, err := tf5to6server.UpgradeServer(
-			ctx,
-			kubernetes.Provider().GRPCProvider,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		// Create slice of provider servers (SDK v2 + Framework)
-		providers := []func() tfprotov6.ProviderServer{
-			providerserver.NewProtocol6(kubectl.New("test")()), // Framework provider
-			func() tfprotov6.ProviderServer {
-				return upgradedSdkServer
-			},
-		}
-
-		// Create mux server
-		muxServer, err := tf6muxserver.NewMuxServer(ctx, providers...)
-		if err != nil {
-			return nil, err
-		}
-
-		return muxServer.ProviderServer(), nil
-	},
+	"kubectl": providerserver.NewProtocol6WithError(kubectl.New("test")()),
 }
 
 // testAccPreCheck validates that required environment variables or conditions
@@ -66,7 +34,9 @@ func testAccPreCheck(t *testing.T) {
 		kubeconfig = homeDir + "/.kube/config"
 
 		if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
-			t.Skip("KUBECONFIG not set and ~/.kube/config does not exist. Skipping acceptance test.")
+			t.Skip(
+				"KUBECONFIG not set and ~/.kube/config does not exist. Skipping acceptance test.",
+			)
 		}
 	}
 

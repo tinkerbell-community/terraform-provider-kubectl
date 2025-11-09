@@ -1,0 +1,51 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: make fmt
+
+      - name: Run linters
+        run: make lint
+
+      - name: Run unit tests
+        run: make test
+
+      - name: Run vet
+        run: make vet
+
+  acceptance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s_version: ["1.28.15", "1.29.10", "1.30.6", "1.31.2"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Kind
+        uses: helm/kind-action@v1
+        with:
+          wait: 2m
+          node_image: kindest/node:v${{ matrix.k8s_version }}
+
+      - name: Run acceptance tests
+        env:
+          TF_ACC: "1"
+        run: make testacc

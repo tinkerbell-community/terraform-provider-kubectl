@@ -1,29 +1,32 @@
-CURRENT_DIR=$(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
-TEST?=$$(go list ./... |grep -v 'vendor')
-GOFMT_FILES?=$$(find . -name '*.go' |grep -v vendor)
-PKG_NAME=kubernetes
-export GO111MODULE=on
-
-export TESTARGS=-race -coverprofile=coverage.txt -covermode=atomic
+LDFLAGS += -X main.version=$$(git describe --always --abbrev=40 --dirty)
+PKG_NAME=kubectl
+TERRAFORM_PLUGINS=$(HOME)/.terraform.d/plugins
+GOPATH?=$$(go env GOPATH)
 
 default: build
 
 build:
-	go install
+	go build -ldflags "${LDFLAGS}"
 
-dist:
-	goreleaser build --single-target --skip-validate --rm-dist
+install: build
+	mkdir -p ${TERRAFORM_PLUGINS}
+	mv terraform-provider-kubectl ${TERRAFORM_PLUGINS}
+	go install -ldflags "${LDFLAGS}"
+
+fmt:
+	gofmt -s -d -e ./kubectl
+
+lint: $(GOPATH)/bin/golangci-lint
+	GOLANGCI_LINT_CACHE=/tmp/golangci-lint-cache/ $(GOPATH)/bin/golangci-lint run kubectl
+
+$(GOPATH)/bin/golangci-lint:
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v1.62.2
 
 test:
-	go test -i $(TEST) || exit 1
-	echo $(TEST) | \
-		xargs -t -n4 go test $(TESTARGS) -timeout=30s -parallel=4
+	go test -v ./kubectl/...
 
 testacc:
-	TF_ACC=1 go test ./kubernetes -v $(TESTARGS) -timeout 120m -count=1
-
-publish:
-	goreleaser release --rm-dist
+	TF_ACC=1 go test -v ./kubectl/... -timeout 120m -count=1
 
 vet:
 	@echo "go vet ."
@@ -34,13 +37,7 @@ vet:
 		exit 1; \
 	fi
 
-fmt:
-	gofmt -w $(GOFMT_FILES)
+clean:
+	rm -f terraform-provider-kubectl
 
-fmtcheck:
-	@sh -c "'$(CURDIR)/scripts/gofmtcheck.sh'"
-
-errcheck:
-	@sh -c "'$(CURDIR)/scripts/errcheck.sh'"
-
-.PHONY: build dist test testacc publish vet fmt fmtcheck errcheck
+.PHONY: build install test testacc fmt lint vet clean
