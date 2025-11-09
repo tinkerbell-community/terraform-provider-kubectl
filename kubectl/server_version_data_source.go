@@ -11,16 +11,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Ensure provider defined types fully satisfy framework interfaces
-var _ datasource.DataSource = &serverVersionDataSource{}
-var _ datasource.DataSourceWithConfigure = &serverVersionDataSource{}
+// Ensure provider defined types fully satisfy framework interfaces.
+var (
+	_ datasource.DataSource              = &serverVersionDataSource{}
+	_ datasource.DataSourceWithConfigure = &serverVersionDataSource{}
+)
 
-// serverVersionDataSource defines the data source implementation
+// serverVersionDataSource defines the data source implementation.
 type serverVersionDataSource struct {
 	providerData *kubectlProviderData
 }
 
-// serverVersionDataSourceModel describes the data source data model
+// serverVersionDataSourceModel describes the data source data model.
 type serverVersionDataSourceModel struct {
 	ID         types.String `tfsdk:"id"`
 	Version    types.String `tfsdk:"version"`
@@ -33,12 +35,12 @@ type serverVersionDataSourceModel struct {
 	Platform   types.String `tfsdk:"platform"`
 }
 
-// NewServerVersionDataSource returns a new server version data source
+// NewServerVersionDataSource returns a new server version data source.
 func NewServerVersionDataSource() datasource.DataSource {
 	return &serverVersionDataSource{}
 }
 
-// Metadata returns the data source type name
+// Metadata returns the data source type name.
 func (d *serverVersionDataSource) Metadata(
 	ctx context.Context,
 	req datasource.MetadataRequest,
@@ -47,7 +49,7 @@ func (d *serverVersionDataSource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_server_version"
 }
 
-// Schema defines the data source schema
+// Schema defines the data source schema.
 func (d *serverVersionDataSource) Schema(
 	ctx context.Context,
 	req datasource.SchemaRequest,
@@ -96,7 +98,7 @@ func (d *serverVersionDataSource) Schema(
 	}
 }
 
-// Configure sets the provider data for the data source
+// Configure sets the provider data for the data source.
 func (d *serverVersionDataSource) Configure(
 	ctx context.Context,
 	req datasource.ConfigureRequest,
@@ -121,7 +123,7 @@ func (d *serverVersionDataSource) Configure(
 	d.providerData = providerData
 }
 
-// Read executes the data source logic
+// Read executes the data source logic.
 func (d *serverVersionDataSource) Read(
 	ctx context.Context,
 	req datasource.ReadRequest,

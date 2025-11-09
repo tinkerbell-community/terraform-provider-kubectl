@@ -45,16 +45,32 @@ func TestAccResourceKubectlServerVersion_triggers(t *testing.T) {
 				Config: testAccResourceKubectlServerVersion_triggers("trigger1"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("kubectl_server_version.test", "id"),
-					resource.TestCheckResourceAttr("kubectl_server_version.test", "triggers.%", "1"),
-					resource.TestCheckResourceAttr("kubectl_server_version.test", "triggers.key1", "trigger1"),
+					resource.TestCheckResourceAttr(
+						"kubectl_server_version.test",
+						"triggers.%",
+						"1",
+					),
+					resource.TestCheckResourceAttr(
+						"kubectl_server_version.test",
+						"triggers.key1",
+						"trigger1",
+					),
 				),
 			},
 			{
 				Config: testAccResourceKubectlServerVersion_triggers("trigger2"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("kubectl_server_version.test", "id"),
-					resource.TestCheckResourceAttr("kubectl_server_version.test", "triggers.%", "1"),
-					resource.TestCheckResourceAttr("kubectl_server_version.test", "triggers.key1", "trigger2"),
+					resource.TestCheckResourceAttr(
+						"kubectl_server_version.test",
+						"triggers.%",
+						"1",
+					),
+					resource.TestCheckResourceAttr(
+						"kubectl_server_version.test",
+						"triggers.key1",
+						"trigger2",
+					),
 				),
 			},
 		},

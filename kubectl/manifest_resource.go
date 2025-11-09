@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/flatten"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
+	"github.com/alekc/terraform-provider-kubectl/yaml"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -26,10 +29,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-
-	"github.com/alekc/terraform-provider-kubectl/flatten"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
-	"github.com/alekc/terraform-provider-kubectl/yaml"
 	"github.com/thedevsaddam/gojsonq/v2"
 	apps_v1 "k8s.io/api/apps/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,7 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// Ensure provider defined types fully satisfy framework interfaces
+// Ensure provider defined types fully satisfy framework interfaces.
 var (
 	_ resource.Resource                = &manifestResource{}
 	_ resource.ResourceWithConfigure   = &manifestResource{}
@@ -46,12 +45,12 @@ var (
 	_ resource.ResourceWithModifyPlan  = &manifestResource{}
 )
 
-// manifestResource defines the resource implementation
+// manifestResource defines the resource implementation.
 type manifestResource struct {
 	providerData *kubectlProviderData
 }
 
-// manifestResourceModel describes the resource data model
+// manifestResourceModel describes the resource data model.
 type manifestResourceModel struct {
 	ID                    types.String   `tfsdk:"id"`
 	UID                   types.String   `tfsdk:"uid"`
@@ -80,31 +79,31 @@ type manifestResourceModel struct {
 	Timeouts              timeouts.Value `tfsdk:"timeouts"`
 }
 
-// waitForModel describes the wait_for block
+// waitForModel describes the wait_for block.
 type waitForModel struct {
 	Conditions types.List `tfsdk:"condition"`
 	Fields     types.List `tfsdk:"field"`
 }
 
-// waitConditionModel describes a condition in wait_for
+// waitConditionModel describes a condition in wait_for.
 type waitConditionModel struct {
 	Type   types.String `tfsdk:"type"`
 	Status types.String `tfsdk:"status"`
 }
 
-// waitFieldModel describes a field in wait_for
+// waitFieldModel describes a field in wait_for.
 type waitFieldModel struct {
 	Key       types.String `tfsdk:"key"`
 	Value     types.String `tfsdk:"value"`
 	ValueType types.String `tfsdk:"value_type"`
 }
 
-// NewManifestResource returns a new manifest resource
+// NewManifestResource returns a new manifest resource.
 func NewManifestResource() resource.Resource {
 	return &manifestResource{}
 }
 
-// Metadata returns the resource type name
+// Metadata returns the resource type name.
 func (r *manifestResource) Metadata(
 	ctx context.Context,
 	req resource.MetadataRequest,
@@ -113,7 +112,7 @@ func (r *manifestResource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_manifest"
 }
 
-// Schema defines the resource schema
+// Schema defines the resource schema.
 func (r *manifestResource) Schema(
 	ctx context.Context,
 	req resource.SchemaRequest,
@@ -315,7 +314,7 @@ func (r *manifestResource) Schema(
 	}
 }
 
-// Configure sets the provider data for the resource
+// Configure sets the provider data for the resource.
 func (r *manifestResource) Configure(
 	ctx context.Context,
 	req resource.ConfigureRequest,
@@ -340,7 +339,7 @@ func (r *manifestResource) Configure(
 	r.providerData = providerData
 }
 
-// Create creates a new Kubernetes resource
+// Create creates a new Kubernetes resource.
 func (r *manifestResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -380,7 +379,6 @@ func (r *manifestResource) Create(
 	err := backoff.Retry(func() error {
 		return r.applyManifest(createCtx, &plan)
 	}, backoffStrategy)
-
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Create Resource",
@@ -403,7 +401,7 @@ func (r *manifestResource) Create(
 	resp.Diagnostics.Append(diags...)
 }
 
-// Read reads the current state of the resource
+// Read reads the current state of the resource.
 func (r *manifestResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
@@ -437,7 +435,7 @@ func (r *manifestResource) Read(
 	resp.Diagnostics.Append(diags...)
 }
 
-// Update updates an existing resource
+// Update updates an existing resource.
 func (r *manifestResource) Update(
 	ctx context.Context,
 	req resource.UpdateRequest,
@@ -476,7 +474,6 @@ func (r *manifestResource) Update(
 	err := backoff.Retry(func() error {
 		return r.applyManifest(updateCtx, &plan)
 	}, backoffStrategy)
-
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Update Resource",
@@ -499,7 +496,7 @@ func (r *manifestResource) Update(
 	resp.Diagnostics.Append(diags...)
 }
 
-// Delete removes the resource
+// Delete removes the resource.
 func (r *manifestResource) Delete(
 	ctx context.Context,
 	req resource.DeleteRequest,
@@ -532,7 +529,7 @@ func (r *manifestResource) Delete(
 	}
 }
 
-// ImportState imports an existing resource
+// ImportState imports an existing resource.
 func (r *manifestResource) ImportState(
 	ctx context.Context,
 	req resource.ImportStateRequest,
@@ -619,7 +616,7 @@ metadata:
 	resp.Diagnostics.Append(diags...)
 }
 
-// ModifyPlan handles plan modification for drift detection and force_new
+// ModifyPlan handles plan modification for drift detection and force_new.
 func (r *manifestResource) ModifyPlan(
 	ctx context.Context,
 	req resource.ModifyPlanRequest,
@@ -697,7 +694,11 @@ func (r *manifestResource) ModifyPlan(
 	// Detect UID drift
 	if !state.UID.IsNull() && !state.LiveUID.IsNull() {
 		if !state.UID.Equal(state.LiveUID) {
-			log.Printf("[TRACE] DETECTED UID DRIFT %s vs %s", state.UID.ValueString(), state.LiveUID.ValueString())
+			log.Printf(
+				"[TRACE] DETECTED UID DRIFT %s vs %s",
+				state.UID.ValueString(),
+				state.LiveUID.ValueString(),
+			)
 			plan.UID = types.StringUnknown()
 		}
 	}
@@ -720,8 +721,11 @@ func (r *manifestResource) ModifyPlan(
 		if err == nil {
 			// Check if immutable fields changed (like some labels, annotations patterns)
 			// For now, we primarily rely on force_new flag and UID drift
-			log.Printf("[TRACE] Successfully read live resource %s for plan comparison", parsedYaml.GetSelfLink())
-			
+			log.Printf(
+				"[TRACE] Successfully read live resource %s for plan comparison",
+				parsedYaml.GetSelfLink(),
+			)
+
 			// Store live UID for comparison
 			if liveUID := string(liveResource.GetUID()); liveUID != "" {
 				if !state.UID.IsNull() && state.UID.ValueString() != liveUID {
@@ -848,7 +852,11 @@ func (r *manifestResource) applyManifest(
 	log.Printf("[INFO] %v manifest applied, fetch resource from kubernetes", manifest)
 
 	// Get the resource from Kubernetes
-	rawResponse, err := restClient.ResourceInterface.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
+	rawResponse, err := restClient.ResourceInterface.Get(
+		ctx,
+		manifest.GetName(),
+		meta_v1.GetOptions{},
+	)
 	if err != nil {
 		return fmt.Errorf("%v failed to fetch resource from kubernetes: %w", manifest, err)
 	}
@@ -904,11 +912,26 @@ func (r *manifestResource) applyManifest(
 
 		switch manifest.GetKind() {
 		case "Deployment":
-			err = r.waitForDeployment(timeoutCtx, manifest.GetNamespace(), manifest.GetName(), createTimeout)
+			err = r.waitForDeployment(
+				timeoutCtx,
+				manifest.GetNamespace(),
+				manifest.GetName(),
+				createTimeout,
+			)
 		case "StatefulSet":
-			err = r.waitForStatefulSet(timeoutCtx, manifest.GetNamespace(), manifest.GetName(), createTimeout)
+			err = r.waitForStatefulSet(
+				timeoutCtx,
+				manifest.GetNamespace(),
+				manifest.GetName(),
+				createTimeout,
+			)
 		case "DaemonSet":
-			err = r.waitForDaemonSet(timeoutCtx, manifest.GetNamespace(), manifest.GetName(), createTimeout)
+			err = r.waitForDaemonSet(
+				timeoutCtx,
+				manifest.GetNamespace(),
+				manifest.GetName(),
+				createTimeout,
+			)
 		default:
 			log.Printf("[WARN] wait_for_rollout not supported for kind %s", manifest.GetKind())
 		}
@@ -954,7 +977,14 @@ func (r *manifestResource) applyManifest(
 
 		log.Printf("[INFO] %v waiting for conditions", manifest)
 
-		err = r.waitForConditions(timeoutCtx, restClient, conditions, fields, manifest.GetName(), createTimeout)
+		err = r.waitForConditions(
+			timeoutCtx,
+			restClient,
+			conditions,
+			fields,
+			manifest.GetName(),
+			createTimeout,
+		)
 		if err != nil {
 			return fmt.Errorf("%v failed to wait for conditions: %w", manifest, err)
 		}
@@ -1000,7 +1030,11 @@ func (r *manifestResource) readManifest(
 	}
 
 	// Get the resource from Kubernetes
-	rawResponse, err := restClient.ResourceInterface.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
+	rawResponse, err := restClient.ResourceInterface.Get(
+		ctx,
+		manifest.GetName(),
+		meta_v1.GetOptions{},
+	)
 	if err != nil {
 		if util.IsNotFoundError(err) {
 			// Resource not found - will be removed from state by caller
@@ -1132,7 +1166,11 @@ func (r *manifestResource) deleteManifest(
 		timeoutCtx, cancel := context.WithTimeout(ctx, deleteTimeout)
 		defer cancel()
 
-		log.Printf("[DEBUG] Waiting for %v to be fully deleted (timeout: %v)", manifest, deleteTimeout)
+		log.Printf(
+			"[DEBUG] Waiting for %v to be fully deleted (timeout: %v)",
+			manifest,
+			deleteTimeout,
+		)
 
 		// Poll until resource is NotFound
 		ticker := time.NewTicker(2 * time.Second)
@@ -1141,10 +1179,17 @@ func (r *manifestResource) deleteManifest(
 		for {
 			select {
 			case <-timeoutCtx.Done():
-				log.Printf("[WARN] Timeout waiting for %v deletion, but delete was initiated", manifest)
+				log.Printf(
+					"[WARN] Timeout waiting for %v deletion, but delete was initiated",
+					manifest,
+				)
 				return nil // Don't fail, deletion was initiated
 			case <-ticker.C:
-				_, err := restClient.ResourceInterface.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
+				_, err := restClient.ResourceInterface.Get(
+					ctx,
+					manifest.GetName(),
+					meta_v1.GetOptions{},
+				)
 				if util.IsNotFoundError(err) {
 					log.Printf("[INFO] %v confirmed deleted", manifest)
 					return nil
@@ -1296,7 +1341,8 @@ func (r *manifestResource) waitForStatefulSet(
 					continue
 				}
 
-				if sts.Status.ObservedGeneration == 0 || sts.Generation > sts.Status.ObservedGeneration {
+				if sts.Status.ObservedGeneration == 0 ||
+					sts.Generation > sts.Status.ObservedGeneration {
 					continue
 				}
 
@@ -1306,7 +1352,8 @@ func (r *manifestResource) waitForStatefulSet(
 
 				if sts.Spec.UpdateStrategy.Type == apps_v1.RollingUpdateStatefulSetStrategyType &&
 					sts.Spec.UpdateStrategy.RollingUpdate != nil {
-					if sts.Spec.Replicas != nil && sts.Spec.UpdateStrategy.RollingUpdate.Partition != nil {
+					if sts.Spec.Replicas != nil &&
+						sts.Spec.UpdateStrategy.RollingUpdate.Partition != nil {
 						if sts.Status.UpdatedReplicas < (*sts.Spec.Replicas - *sts.Spec.UpdateStrategy.RollingUpdate.Partition) {
 							continue
 						}
@@ -1444,10 +1491,20 @@ func (r *manifestResource) waitForConditions(
 						Where("type", "=", condType).
 						Where("status", "=", condStatus).Count()
 					if count == 0 {
-						log.Printf("[TRACE] Condition %s with status %s not found in %s", condType, condStatus, name)
+						log.Printf(
+							"[TRACE] Condition %s with status %s not found in %s",
+							condType,
+							condStatus,
+							name,
+						)
 						continue
 					}
-					log.Printf("[TRACE] Condition %s with status %s found in %s", condType, condStatus, name)
+					log.Printf(
+						"[TRACE] Condition %s with status %s found in %s",
+						condType,
+						condStatus,
+						name,
+					)
 					totalMatches++
 				}
 
@@ -1477,19 +1534,43 @@ func (r *manifestResource) waitForConditions(
 						}
 
 						if !matched {
-							log.Printf("[TRACE] Value %s does not match regex %s in %s (key %s)", stringVal, value, name, key)
+							log.Printf(
+								"[TRACE] Value %s does not match regex %s in %s (key %s)",
+								stringVal,
+								value,
+								name,
+								key,
+							)
 							continue
 						}
 
-						log.Printf("[TRACE] Value %s matches regex %s in %s (key %s)", stringVal, value, name, key)
+						log.Printf(
+							"[TRACE] Value %s matches regex %s in %s (key %s)",
+							stringVal,
+							value,
+							name,
+							key,
+						)
 						totalMatches++
 
 					case "eq":
 						if stringVal != value {
-							log.Printf("[TRACE] Value %s does not match %s in %s (key %s)", stringVal, value, name, key)
+							log.Printf(
+								"[TRACE] Value %s does not match %s in %s (key %s)",
+								stringVal,
+								value,
+								name,
+								key,
+							)
 							continue
 						}
-						log.Printf("[TRACE] Value %s matches %s in %s (key %s)", stringVal, value, name, key)
+						log.Printf(
+							"[TRACE] Value %s matches %s in %s (key %s)",
+							stringVal,
+							value,
+							name,
+							key,
+						)
 						totalMatches++
 					}
 				}
@@ -1499,7 +1580,12 @@ func (r *manifestResource) waitForConditions(
 					done = true
 					continue
 				}
-				log.Printf("[TRACE] %d/%d conditions met for %s. Waiting for next event", totalMatches, totalConditions, name)
+				log.Printf(
+					"[TRACE] %d/%d conditions met for %s. Waiting for next event",
+					totalMatches,
+					totalConditions,
+					name,
+				)
 			}
 
 		case <-ctx.Done():
@@ -1511,7 +1597,7 @@ func (r *manifestResource) waitForConditions(
 }
 
 // generateFingerprints creates a fingerprint of the live manifest for drift detection
-// This is based on the SDK v2 implementation in kubernetes/resource_kubectl_manifest.go
+// This is based on the SDK v2 implementation in kubernetes/resource_kubectl_manifest.go.
 func (r *manifestResource) generateFingerprints(
 	ctx context.Context,
 	userProvided *yaml.Manifest,
@@ -1528,11 +1614,16 @@ func (r *manifestResource) generateFingerprints(
 	// If user provided stringData, convert it to base64-encoded data for comparison
 	if userProvided.GetKind() == "Secret" && userProvided.GetAPIVersion() == "v1" {
 		if stringData, found := userProvided.Raw.Object["stringData"]; found {
-			if stringDataMap, ok := stringData.(map[string]interface{}); ok {
+			if stringDataMap, ok := stringData.(map[string]any); ok {
 				// Move all stringData values to data as base64
 				for k, v := range stringDataMap {
 					encodedString := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%v", v)))
-					meta_v1_unstruct.SetNestedField(userProvided.Raw.Object, encodedString, "data", k)
+					meta_v1_unstruct.SetNestedField(
+						userProvided.Raw.Object,
+						encodedString,
+						"data",
+						k,
+					)
 				}
 				// Remove stringData field
 				meta_v1_unstruct.RemoveNestedField(userProvided.Raw.Object, "stringData")
@@ -1590,14 +1681,14 @@ func (r *manifestResource) generateFingerprints(
 	return strings.Join(returnedValues, "\n")
 }
 
-// getFingerprint generates a SHA256 hash of a string
+// getFingerprint generates a SHA256 hash of a string.
 func getFingerprint(s string) string {
 	fingerprint := sha256.New()
 	fingerprint.Write([]byte(s))
 	return fmt.Sprintf("%x", fingerprint.Sum(nil))
 }
 
-// kubernetesControlFields are fields managed by Kubernetes that should be ignored in drift detection
+// kubernetesControlFields are fields managed by Kubernetes that should be ignored in drift detection.
 var kubernetesControlFields = []string{
 	"status",
 	"metadata.finalizers",

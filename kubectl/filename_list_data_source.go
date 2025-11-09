@@ -13,13 +13,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Ensure provider defined types fully satisfy framework interfaces
+// Ensure provider defined types fully satisfy framework interfaces.
 var _ datasource.DataSource = &filenameListDataSource{}
 
-// filenameListDataSource defines the data source implementation
+// filenameListDataSource defines the data source implementation.
 type filenameListDataSource struct{}
 
-// filenameListDataSourceModel describes the data source data model
+// filenameListDataSourceModel describes the data source data model.
 type filenameListDataSourceModel struct {
 	ID        types.String `tfsdk:"id"`
 	Pattern   types.String `tfsdk:"pattern"`
@@ -27,12 +27,12 @@ type filenameListDataSourceModel struct {
 	Basenames types.List   `tfsdk:"basenames"`
 }
 
-// NewFilenameListDataSource returns a new filename list data source
+// NewFilenameListDataSource returns a new filename list data source.
 func NewFilenameListDataSource() datasource.DataSource {
 	return &filenameListDataSource{}
 }
 
-// Metadata returns the data source type name
+// Metadata returns the data source type name.
 func (d *filenameListDataSource) Metadata(
 	ctx context.Context,
 	req datasource.MetadataRequest,
@@ -41,7 +41,7 @@ func (d *filenameListDataSource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_filename_list"
 }
 
-// Schema defines the data source schema
+// Schema defines the data source schema.
 func (d *filenameListDataSource) Schema(
 	ctx context.Context,
 	req datasource.SchemaRequest,
@@ -66,8 +66,8 @@ func (d *filenameListDataSource) Schema(
 				MarkdownDescription: "List of file paths that matched the glob pattern, sorted alphabetically.",
 			},
 			"basenames": schema.ListAttribute{
-				ElementType:         types.StringType,
-				Computed:            true,
+				ElementType: types.StringType,
+				Computed:    true,
 				MarkdownDescription: "List of basenames (filenames without directory path) for matched files, " +
 					"sorted alphabetically.",
 			},
@@ -75,7 +75,7 @@ func (d *filenameListDataSource) Schema(
 	}
 }
 
-// Read executes the data source logic
+// Read executes the data source logic.
 func (d *filenameListDataSource) Read(
 	ctx context.Context,
 	req datasource.ReadRequest,

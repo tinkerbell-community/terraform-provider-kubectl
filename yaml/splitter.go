@@ -4,8 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	yamlParser "gopkg.in/yaml.v2"
 	"strings"
+
+	yamlParser "gopkg.in/yaml.v2"
 )
 
 func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
@@ -13,8 +14,8 @@ func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
 
 	contentSplit := bytes.Split(content, []byte(yamlSeparator))
 
-	//set the maxCapacity using the size of the largest element
-	var maxCapacity = bufio.MaxScanTokenSize
+	// set the maxCapacity using the size of the largest element
+	maxCapacity := bufio.MaxScanTokenSize
 	for _, element := range contentSplit {
 		if len(element) >= maxCapacity {
 			maxCapacity = len(element) + 100
@@ -23,7 +24,7 @@ func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
 
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 
-	//increase the buffer token size if file is over the default token size
+	// increase the buffer token size if file is over the default token size
 	if maxCapacity > bufio.MaxScanTokenSize {
 		buf := make([]byte, maxCapacity)
 		scanner.Buffer(buf, maxCapacity)
@@ -35,7 +36,7 @@ func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
 		document := strings.TrimSpace(scanner.Text())
 
 		// attempt to parse the document as yaml
-		rawYamlParsed := &map[string]interface{}{}
+		rawYamlParsed := &map[string]any{}
 		err := yamlParser.Unmarshal([]byte(document), rawYamlParsed)
 		if err != nil {
 			return documents, fmt.Errorf("Error parsing yaml document: %v\n%v", err, document)

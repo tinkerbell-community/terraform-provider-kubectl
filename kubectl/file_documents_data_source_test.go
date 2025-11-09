@@ -18,13 +18,21 @@ func TestAccDataSourceKubectlFileDocuments_singleDocument(t *testing.T) {
 				Config: testAccDataSourceKubectlFileDocuments_singleDocument(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_file_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_file_documents.test", "documents.#", "1"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_file_documents.test",
+						"documents.#",
+						"1",
+					),
 					resource.TestMatchResourceAttr(
 						"data.kubectl_file_documents.test",
 						"documents.0",
 						regexp.MustCompile(`kind:\s*ConfigMap`),
 					),
-					resource.TestCheckResourceAttr("data.kubectl_file_documents.test", "manifests.%", "1"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_file_documents.test",
+						"manifests.%",
+						"1",
+					),
 				),
 			},
 		},
@@ -42,13 +50,21 @@ func TestAccDataSourceKubectlFileDocuments_multiDocument(t *testing.T) {
 				Config: testAccDataSourceKubectlFileDocuments_multiDocument(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_file_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_file_documents.test", "documents.#", "3"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_file_documents.test",
+						"documents.#",
+						"3",
+					),
 					resource.TestMatchResourceAttr(
 						"data.kubectl_file_documents.test",
 						"documents.0",
 						regexp.MustCompile(`kind:\s*(ConfigMap|Deployment|Service)`),
 					),
-					resource.TestCheckResourceAttr("data.kubectl_file_documents.test", "manifests.%", "3"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_file_documents.test",
+						"manifests.%",
+						"3",
+					),
 				),
 			},
 		},
@@ -66,8 +82,16 @@ func TestAccDataSourceKubectlFileDocuments_emptyDocuments(t *testing.T) {
 				Config: testAccDataSourceKubectlFileDocuments_emptyDocuments(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_file_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_file_documents.test", "documents.#", "0"),
-					resource.TestCheckResourceAttr("data.kubectl_file_documents.test", "manifests.%", "0"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_file_documents.test",
+						"documents.#",
+						"0",
+					),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_file_documents.test",
+						"manifests.%",
+						"0",
+					),
 				),
 			},
 		},

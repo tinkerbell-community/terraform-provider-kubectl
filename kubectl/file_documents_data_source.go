@@ -11,13 +11,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Ensure provider defined types fully satisfy framework interfaces
+// Ensure provider defined types fully satisfy framework interfaces.
 var _ datasource.DataSource = &fileDocumentsDataSource{}
 
-// fileDocumentsDataSource defines the data source implementation
+// fileDocumentsDataSource defines the data source implementation.
 type fileDocumentsDataSource struct{}
 
-// fileDocumentsDataSourceModel describes the data source data model
+// fileDocumentsDataSourceModel describes the data source data model.
 type fileDocumentsDataSourceModel struct {
 	ID        types.String `tfsdk:"id"`
 	Content   types.String `tfsdk:"content"`
@@ -25,12 +25,12 @@ type fileDocumentsDataSourceModel struct {
 	Manifests types.Map    `tfsdk:"manifests"`
 }
 
-// NewFileDocumentsDataSource returns a new file documents data source
+// NewFileDocumentsDataSource returns a new file documents data source.
 func NewFileDocumentsDataSource() datasource.DataSource {
 	return &fileDocumentsDataSource{}
 }
 
-// Metadata returns the data source type name
+// Metadata returns the data source type name.
 func (d *fileDocumentsDataSource) Metadata(
 	ctx context.Context,
 	req datasource.MetadataRequest,
@@ -39,7 +39,7 @@ func (d *fileDocumentsDataSource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_file_documents"
 }
 
-// Schema defines the data source schema
+// Schema defines the data source schema.
 func (d *fileDocumentsDataSource) Schema(
 	ctx context.Context,
 	req datasource.SchemaRequest,
@@ -74,7 +74,7 @@ func (d *fileDocumentsDataSource) Schema(
 	}
 }
 
-// Read executes the data source logic
+// Read executes the data source logic.
 func (d *fileDocumentsDataSource) Read(
 	ctx context.Context,
 	req datasource.ReadRequest,

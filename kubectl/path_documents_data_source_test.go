@@ -18,9 +18,19 @@ func TestAccDataSourceKubectlPathDocuments_basic(t *testing.T) {
 				Config: testAccDataSourceKubectlPathDocuments_basic(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_path_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_path_documents.test", "pattern", "../_examples/manifests/*.yaml"),
-					resource.TestCheckResourceAttrSet("data.kubectl_path_documents.test", "documents.#"),
-					resource.TestCheckResourceAttrSet("data.kubectl_path_documents.test", "manifests.%"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_path_documents.test",
+						"pattern",
+						"../_examples/manifests/*.yaml",
+					),
+					resource.TestCheckResourceAttrSet(
+						"data.kubectl_path_documents.test",
+						"documents.#",
+					),
+					resource.TestCheckResourceAttrSet(
+						"data.kubectl_path_documents.test",
+						"manifests.%",
+					),
 				),
 			},
 		},
@@ -38,9 +48,21 @@ func TestAccDataSourceKubectlPathDocuments_templateVars(t *testing.T) {
 				Config: testAccDataSourceKubectlPathDocuments_templateVars(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_path_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_path_documents.test", "vars.%", "2"),
-					resource.TestCheckResourceAttr("data.kubectl_path_documents.test", "vars.namespace", "test-namespace"),
-					resource.TestCheckResourceAttr("data.kubectl_path_documents.test", "vars.replicas", "3"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_path_documents.test",
+						"vars.%",
+						"2",
+					),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_path_documents.test",
+						"vars.namespace",
+						"test-namespace",
+					),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_path_documents.test",
+						"vars.replicas",
+						"3",
+					),
 					resource.TestMatchResourceAttr(
 						"data.kubectl_path_documents.test",
 						"documents.0",
@@ -63,7 +85,11 @@ func TestAccDataSourceKubectlPathDocuments_sensitiveVars(t *testing.T) {
 				Config: testAccDataSourceKubectlPathDocuments_sensitiveVars(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_path_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_path_documents.test", "sensitive_vars.%", "1"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_path_documents.test",
+						"sensitive_vars.%",
+						"1",
+					),
 					resource.TestMatchResourceAttr(
 						"data.kubectl_path_documents.test",
 						"documents.0",
@@ -86,7 +112,11 @@ func TestAccDataSourceKubectlPathDocuments_disableTemplate(t *testing.T) {
 				Config: testAccDataSourceKubectlPathDocuments_disableTemplate(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_path_documents.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_path_documents.test", "disable_template", "true"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_path_documents.test",
+						"disable_template",
+						"true",
+					),
 					resource.TestMatchResourceAttr(
 						"data.kubectl_path_documents.test",
 						"documents.0",

@@ -4,7 +4,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// providerModel describes the provider configuration data model
+// providerModel describes the provider configuration data model.
 type providerModel struct {
 	ApplyRetryCount       types.Int64  `tfsdk:"apply_retry_count"`
 	Host                  types.String `tfsdk:"host"`
@@ -26,7 +26,7 @@ type providerModel struct {
 	Exec                  types.List   `tfsdk:"exec"` // List of execModel objects
 }
 
-// execModel describes the exec configuration nested block
+// execModel describes the exec configuration nested block.
 type execModel struct {
 	APIVersion types.String `tfsdk:"api_version"`
 	Command    types.String `tfsdk:"command"`

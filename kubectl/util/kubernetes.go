@@ -18,7 +18,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-// ConfigData represents the provider configuration data for Kubernetes initialization
+// ConfigData represents the provider configuration data for Kubernetes initialization.
 type ConfigData struct {
 	Host                  types.String
 	Username              types.String
@@ -39,7 +39,7 @@ type ConfigData struct {
 	Exec                  types.List
 }
 
-// ExecConfigData represents exec authentication configuration
+// ExecConfigData represents exec authentication configuration.
 type ExecConfigData struct {
 	APIVersion types.String `tfsdk:"api_version"`
 	Command    types.String `tfsdk:"command"`
@@ -48,7 +48,7 @@ type ExecConfigData struct {
 }
 
 // InitializeConfiguration creates a Kubernetes REST config from provider configuration
-// This is adapted from the SDK v2 version to work with Plugin Framework types
+// This is adapted from the SDK v2 version to work with Plugin Framework types.
 func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclient.Config, error) {
 	overrides := &clientcmd.ConfigOverrides{}
 	loader := &clientcmd.ClientConfigLoadingRules{}
@@ -149,18 +149,25 @@ func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclien
 	}
 
 	if !config.ClusterCACertificate.IsNull() {
-		overrides.ClusterInfo.CertificateAuthorityData = bytes.NewBufferString(config.ClusterCACertificate.ValueString()).Bytes()
+		overrides.ClusterInfo.CertificateAuthorityData = bytes.NewBufferString(config.ClusterCACertificate.ValueString()).
+			Bytes()
 	}
 
 	if !config.ClientCertificate.IsNull() {
-		overrides.AuthInfo.ClientCertificateData = bytes.NewBufferString(config.ClientCertificate.ValueString()).Bytes()
+		overrides.AuthInfo.ClientCertificateData = bytes.NewBufferString(config.ClientCertificate.ValueString()).
+			Bytes()
 	}
 
 	if !config.Host.IsNull() {
 		hasCA := len(overrides.ClusterInfo.CertificateAuthorityData) != 0
 		hasCert := len(overrides.AuthInfo.ClientCertificateData) != 0
 		defaultTLS := hasCA || hasCert || overrides.ClusterInfo.InsecureSkipTLSVerify
-		host, _, err := restclient.DefaultServerURL(config.Host.ValueString(), "", apimachineryschema.GroupVersion{}, defaultTLS)
+		host, _, err := restclient.DefaultServerURL(
+			config.Host.ValueString(),
+			"",
+			apimachineryschema.GroupVersion{},
+			defaultTLS,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse host: %w", err)
 		}
@@ -177,7 +184,8 @@ func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclien
 	}
 
 	if !config.ClientKey.IsNull() {
-		overrides.AuthInfo.ClientKeyData = bytes.NewBufferString(config.ClientKey.ValueString()).Bytes()
+		overrides.AuthInfo.ClientKeyData = bytes.NewBufferString(config.ClientKey.ValueString()).
+			Bytes()
 	}
 
 	if !config.Token.IsNull() {
@@ -201,7 +209,7 @@ func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclien
 	return cfg, nil
 }
 
-// ComputeDiscoverCacheDir takes the parentDir and the host and comes up with a "usually non-colliding" name
+// ComputeDiscoverCacheDir takes the parentDir and the host and comes up with a "usually non-colliding" name.
 var overlyCautiousIllegalFileCharacters = regexp.MustCompile(`[^(\w/\.)]`)
 
 func ComputeDiscoverCacheDir(parentDir, host string) string {
@@ -210,7 +218,7 @@ func ComputeDiscoverCacheDir(parentDir, host string) string {
 	return filepath.Join(parentDir, safeHost)
 }
 
-// GetEnvOrDefault returns the environment variable value or a default
+// GetEnvOrDefault returns the environment variable value or a default.
 func GetEnvOrDefault(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -218,7 +226,7 @@ func GetEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// StringListToFramework converts a []string to a Framework types.List
+// StringListToFramework converts a []string to a Framework types.List.
 func StringListToFramework(ctx context.Context, input []string) types.List {
 	if len(input) == 0 {
 		return types.ListNull(types.StringType)
@@ -233,7 +241,7 @@ func StringListToFramework(ctx context.Context, input []string) types.List {
 	return list
 }
 
-// StringMapToFramework converts a map[string]string to a Framework types.Map
+// StringMapToFramework converts a map[string]string to a Framework types.Map.
 func StringMapToFramework(ctx context.Context, input map[string]string) types.Map {
 	if len(input) == 0 {
 		return types.MapNull(types.StringType)

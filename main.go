@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 
-// version is set via -ldflags during build
+// version is set via -ldflags during build.
 var version string = "dev"
 
 //go:generate go tool tfplugindocs generate -provider-name kubectl

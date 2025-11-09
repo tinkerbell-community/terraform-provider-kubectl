@@ -18,8 +18,15 @@ func TestAccDataSourceKubectlFilenameList_basic(t *testing.T) {
 				Config: testAccDataSourceKubectlFilenameList_basic(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_filename_list.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_filename_list.test", "pattern", "../_examples/manifests/*.yaml"),
-					resource.TestCheckResourceAttrSet("data.kubectl_filename_list.test", "matches.#"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_filename_list.test",
+						"pattern",
+						"../_examples/manifests/*.yaml",
+					),
+					resource.TestCheckResourceAttrSet(
+						"data.kubectl_filename_list.test",
+						"matches.#",
+					),
 				),
 			},
 		},
@@ -37,8 +44,16 @@ func TestAccDataSourceKubectlFilenameList_noMatches(t *testing.T) {
 				Config: testAccDataSourceKubectlFilenameList_noMatches(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_filename_list.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_filename_list.test", "pattern", "../_examples/manifests/*.nonexistent"),
-					resource.TestCheckResourceAttr("data.kubectl_filename_list.test", "matches.#", "0"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_filename_list.test",
+						"pattern",
+						"../_examples/manifests/*.nonexistent",
+					),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_filename_list.test",
+						"matches.#",
+						"0",
+					),
 				),
 			},
 		},
@@ -56,8 +71,15 @@ func TestAccDataSourceKubectlFilenameList_recursive(t *testing.T) {
 				Config: testAccDataSourceKubectlFilenameList_recursive(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.kubectl_filename_list.test", "id"),
-					resource.TestCheckResourceAttr("data.kubectl_filename_list.test", "pattern", "../_examples/**/*.yaml"),
-					resource.TestCheckResourceAttrSet("data.kubectl_filename_list.test", "matches.#"),
+					resource.TestCheckResourceAttr(
+						"data.kubectl_filename_list.test",
+						"pattern",
+						"../_examples/**/*.yaml",
+					),
+					resource.TestCheckResourceAttrSet(
+						"data.kubectl_filename_list.test",
+						"matches.#",
+					),
 					resource.TestMatchResourceAttr(
 						"data.kubectl_filename_list.test",
 						"matches.0",

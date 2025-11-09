@@ -27,13 +27,13 @@ import (
 	"github.com/zclconf/go-cty/cty/function/stdlib"
 )
 
-// Ensure provider defined types fully satisfy framework interfaces
+// Ensure provider defined types fully satisfy framework interfaces.
 var _ datasource.DataSource = &pathDocumentsDataSource{}
 
-// pathDocumentsDataSource defines the data source implementation
+// pathDocumentsDataSource defines the data source implementation.
 type pathDocumentsDataSource struct{}
 
-// pathDocumentsDataSourceModel describes the data source data model
+// pathDocumentsDataSourceModel describes the data source data model.
 type pathDocumentsDataSourceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Pattern         types.String `tfsdk:"pattern"`
@@ -44,12 +44,12 @@ type pathDocumentsDataSourceModel struct {
 	DisableTemplate types.Bool   `tfsdk:"disable_template"`
 }
 
-// NewPathDocumentsDataSource returns a new path documents data source
+// NewPathDocumentsDataSource returns a new path documents data source.
 func NewPathDocumentsDataSource() datasource.DataSource {
 	return &pathDocumentsDataSource{}
 }
 
-// Metadata returns the data source type name
+// Metadata returns the data source type name.
 func (d *pathDocumentsDataSource) Metadata(
 	ctx context.Context,
 	req datasource.MetadataRequest,
@@ -58,7 +58,7 @@ func (d *pathDocumentsDataSource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_path_documents"
 }
 
-// Schema defines the data source schema
+// Schema defines the data source schema.
 func (d *pathDocumentsDataSource) Schema(
 	ctx context.Context,
 	req datasource.SchemaRequest,
@@ -113,7 +113,7 @@ func (d *pathDocumentsDataSource) Schema(
 	}
 }
 
-// Read executes the data source logic
+// Read executes the data source logic.
 func (d *pathDocumentsDataSource) Read(
 	ctx context.Context,
 	req datasource.ReadRequest,
@@ -130,7 +130,7 @@ func (d *pathDocumentsDataSource) Read(
 	pattern := data.Pattern.ValueString()
 
 	// Merge vars and sensitive_vars
-	vars := make(map[string]interface{})
+	vars := make(map[string]any)
 	if !data.Vars.IsNull() && !data.Vars.IsUnknown() {
 		var varsMap map[string]string
 		diags := data.Vars.ElementsAs(ctx, &varsMap, false)
@@ -265,9 +265,13 @@ func (d *pathDocumentsDataSource) Read(
 	resp.Diagnostics.Append(diags...)
 }
 
-// parseTemplate parses and executes a template using vars
-func parseTemplate(s string, vars map[string]interface{}) (string, error) {
-	expr, diags := hclsyntax.ParseTemplate([]byte(s), "<template_file>", hcl.Pos{Line: 1, Column: 1})
+// parseTemplate parses and executes a template using vars.
+func parseTemplate(s string, vars map[string]any) (string, error) {
+	expr, diags := hclsyntax.ParseTemplate(
+		[]byte(s),
+		"<template_file>",
+		hcl.Pos{Line: 1, Column: 1},
+	)
 	if expr == nil || (diags != nil && diags.HasErrors()) {
 		return "", diags
 	}
@@ -306,7 +310,7 @@ var (
 	pathDocsFuncs     map[string]function.Function = nil
 )
 
-// kubectlPathDocumentsFunctions returns the set of functions for template evaluation
+// kubectlPathDocumentsFunctions returns the set of functions for template evaluation.
 func kubectlPathDocumentsFunctions() map[string]function.Function {
 	pathDocsFuncsLock.Lock()
 	if pathDocsFuncs == nil {
@@ -417,9 +421,12 @@ func kubectlPathDocumentsFunctions() map[string]function.Function {
 			"zipmap":           funcs.ZipmapFunc,
 		}
 
-		pathDocsFuncs["templatefile"] = funcs.MakeTemplateFileFunc(baseDir, func() map[string]function.Function {
-			return pathDocsFuncs
-		})
+		pathDocsFuncs["templatefile"] = funcs.MakeTemplateFileFunc(
+			baseDir,
+			func() map[string]function.Function {
+				return pathDocsFuncs
+			},
+		)
 	}
 	pathDocsFuncsLock.Unlock()
 	return pathDocsFuncs

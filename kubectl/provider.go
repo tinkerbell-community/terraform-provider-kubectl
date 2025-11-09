@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -14,7 +15,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/mitchellh/go-homedir"
-
 	"k8s.io/apimachinery/pkg/api/meta"
 	k8sresource "k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/discovery"
@@ -24,19 +24,17 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	aggregator "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
-
-	"time"
 )
 
-// Ensure the implementation satisfies the provider.Provider interface
+// Ensure the implementation satisfies the provider.Provider interface.
 var _ provider.Provider = &kubectlProvider{}
 
-// kubectlProvider defines the provider implementation
+// kubectlProvider defines the provider implementation.
 type kubectlProvider struct {
 	version string
 }
 
-// kubectlProviderData contains the configured Kubernetes clients and settings
+// kubectlProviderData contains the configured Kubernetes clients and settings.
 type kubectlProviderData struct {
 	MainClientset       *kubernetes.Clientset
 	RestConfig          *restclient.Config
@@ -44,7 +42,7 @@ type kubectlProviderData struct {
 	ApplyRetryCount     int64
 }
 
-// Implement k8sresource.RESTClientGetter interface for kubectlProviderData
+// Implement k8sresource.RESTClientGetter interface for kubectlProviderData.
 var _ k8sresource.RESTClientGetter = &kubectlProviderData{}
 
 func (p *kubectlProviderData) ToRawKubeConfigLoader() clientcmd.ClientConfig {
@@ -58,8 +56,16 @@ func (p *kubectlProviderData) ToRESTConfig() (*restclient.Config, error) {
 func (p *kubectlProviderData) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, error) {
 	home, _ := homedir.Dir()
 	httpCacheDir := filepath.Join(home, ".kube", "http-cache")
-	discoveryCacheDir := util.ComputeDiscoverCacheDir(filepath.Join(home, ".kube", "cache", "discovery"), p.RestConfig.Host)
-	return diskcached.NewCachedDiscoveryClientForConfig(p.RestConfig, discoveryCacheDir, httpCacheDir, 10*time.Minute)
+	discoveryCacheDir := util.ComputeDiscoverCacheDir(
+		filepath.Join(home, ".kube", "cache", "discovery"),
+		p.RestConfig.Host,
+	)
+	return diskcached.NewCachedDiscoveryClientForConfig(
+		p.RestConfig,
+		discoveryCacheDir,
+		httpCacheDir,
+		10*time.Minute,
+	)
 }
 
 func (p *kubectlProviderData) ToRESTMapper() (meta.RESTMapper, error) {
@@ -77,7 +83,7 @@ func (p *kubectlProviderData) ToRESTMapper() (meta.RESTMapper, error) {
 	return nil, fmt.Errorf("no restmapper available")
 }
 
-// New returns a new provider instance
+// New returns a new provider instance.
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
 		return &kubectlProvider{
@@ -86,7 +92,7 @@ func New(version string) func() provider.Provider {
 	}
 }
 
-// Metadata returns the provider type name
+// Metadata returns the provider type name.
 func (p *kubectlProvider) Metadata(
 	ctx context.Context,
 	req provider.MetadataRequest,
@@ -96,7 +102,7 @@ func (p *kubectlProvider) Metadata(
 	resp.Version = p.version
 }
 
-// Schema defines the provider-level schema for configuration data
+// Schema defines the provider-level schema for configuration data.
 func (p *kubectlProvider) Schema(
 	ctx context.Context,
 	req provider.SchemaRequest,
@@ -226,7 +232,7 @@ func (p *kubectlProvider) Schema(
 	}
 }
 
-// Configure prepares the Kubernetes client for data sources and resources
+// Configure prepares the Kubernetes client for data sources and resources.
 func (p *kubectlProvider) Configure(
 	ctx context.Context,
 	req provider.ConfigureRequest,
@@ -444,7 +450,7 @@ func (p *kubectlProvider) Configure(
 	resp.ResourceData = providerData
 }
 
-// Resources returns the resources implemented by this provider
+// Resources returns the resources implemented by this provider.
 func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewServerVersionResource,
@@ -452,7 +458,7 @@ func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resou
 	}
 }
 
-// DataSources returns the data sources implemented by this provider
+// DataSources returns the data sources implemented by this provider.
 func (p *kubectlProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewFilenameListDataSource,

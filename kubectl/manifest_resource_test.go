@@ -115,11 +115,18 @@ func TestAccResourceKubectlManifest_overrideNamespace(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccResourceKubectlManifest_overrideNamespace(configMapName, overrideNamespace),
+				Config: testAccResourceKubectlManifest_overrideNamespace(
+					configMapName,
+					overrideNamespace,
+				),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", configMapName),
 					resource.TestCheckResourceAttr(resourceName, "namespace", overrideNamespace),
-					resource.TestCheckResourceAttr(resourceName, "override_namespace", overrideNamespace),
+					resource.TestCheckResourceAttr(
+						resourceName,
+						"override_namespace",
+						overrideNamespace,
+					),
 				),
 			},
 		},
@@ -164,7 +171,11 @@ func TestAccResourceKubectlManifest_ignoreFields(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", configMapName),
 					resource.TestCheckResourceAttr(resourceName, "ignore_fields.#", "1"),
-					resource.TestCheckResourceAttr(resourceName, "ignore_fields.0", "metadata.annotations"),
+					resource.TestCheckResourceAttr(
+						resourceName,
+						"ignore_fields.0",
+						"metadata.annotations",
+					),
 				),
 			},
 		},

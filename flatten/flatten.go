@@ -15,7 +15,7 @@ import (
 // any combination of those together.
 //
 // See the tests for examples of what inputs are turned into.
-func Flatten(thing map[string]interface{}) map[string]string {
+func Flatten(thing map[string]any) map[string]string {
 	result := make(map[string]string)
 
 	for k, raw := range thing {

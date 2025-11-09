@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubectl/pkg/cmd/apply"
 	k8sdelete "k8s.io/kubectl/pkg/cmd/delete"
@@ -31,60 +32,71 @@ import (
 	"k8s.io/kubectl/pkg/validation"
 )
 
-// RestClientResult contains the result of creating a REST client
+// RestClientResult contains the result of creating a REST client.
 type RestClientResult struct {
 	ResourceInterface dynamic.ResourceInterface
 	Error             error
 }
 
-// RestClientResultSuccess creates a successful result
+// RestClientResultSuccess creates a successful result.
 func RestClientResultSuccess(ri dynamic.ResourceInterface) *RestClientResult {
 	return &RestClientResult{ResourceInterface: ri}
 }
 
-// RestClientResultFromErr creates an error result
+// RestClientResultFromErr creates an error result.
 func RestClientResultFromErr(err error) *RestClientResult {
 	return &RestClientResult{Error: err}
 }
 
-// RestClientResultFromInvalidTypeErr creates an invalid type error result
+// RestClientResultFromInvalidTypeErr creates an invalid type error result.
 func RestClientResultFromInvalidTypeErr(err error) *RestClientResult {
 	return &RestClientResult{Error: err}
 }
 
-// RestClientGetter implements genericclioptions.RESTClientGetter
+// RestClientGetter implements genericclioptions.RESTClientGetter.
 type RestClientGetter struct {
 	restConfig *restclient.Config
 }
 
-// NewRestClientGetter creates a new REST client getter
+// NewRestClientGetter creates a new REST client getter.
 func NewRestClientGetter(config *restclient.Config) *RestClientGetter {
 	return &RestClientGetter{restConfig: config}
 }
 
-// ToRESTConfig returns the REST config
+// ToRESTConfig returns the REST config.
 func (r *RestClientGetter) ToRESTConfig() (*restclient.Config, error) {
 	return r.restConfig, nil
 }
 
-// ToDiscoveryClient returns a cached discovery client
+// ToDiscoveryClient returns a cached discovery client.
 func (r *RestClientGetter) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, error) {
 	discoveryClient := discovery.NewDiscoveryClientForConfigOrDie(r.restConfig)
 	return memory.NewMemCacheClient(discoveryClient), nil
 }
 
-// ToRESTMapper returns a REST mapper
+// ToRESTMapper returns a REST mapper.
 func (r *RestClientGetter) ToRESTMapper() (meta.RESTMapper, error) {
-	return nil, fmt.Errorf("RESTMapper not implemented")
+	discoveryClient, err := r.ToDiscoveryClient()
+	if err != nil {
+		return nil, err
+	}
+	if discoveryClient != nil {
+		mapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
+		expander := restmapper.NewShortcutExpander(mapper, discoveryClient, func(msg string) {
+			// Log warnings silently
+		})
+		return expander, nil
+	}
+	return nil, fmt.Errorf("no restmapper available")
 }
 
-// ToRawKubeConfigLoader returns a kubeconfig loader
+// ToRawKubeConfigLoader returns a kubeconfig loader.
 func (r *RestClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 	return nil
 }
 
 // GetRestClientFromUnstructured creates a dynamic client for the given manifest
-// Adapted from SDK v2 kubernetes/resource_kubectl_manifest.go
+// Adapted from SDK v2 kubernetes/resource_kubectl_manifest.go.
 func GetRestClientFromUnstructured(
 	ctx context.Context,
 	manifest *yaml.Manifest,
@@ -164,7 +176,7 @@ func GetRestClientFromUnstructured(
 
 	timeout := time.NewTimer(60 * time.Second)
 	defer timeout.Stop()
-	
+
 	select {
 	case res := <-discoveryWithTimeout():
 		return res
@@ -177,7 +189,7 @@ func GetRestClientFromUnstructured(
 }
 
 // checkAPIResourceIsPresent loops through available APIResources and
-// checks if there is a resource for the APIVersion and Kind defined in the resource
+// checks if there is a resource for the APIVersion and Kind defined in the resource.
 func checkAPIResourceIsPresent(
 	available []*meta_v1.APIResourceList,
 	resource meta_v1_unstruct.Unstructured,
@@ -189,7 +201,8 @@ func checkAPIResourceIsPresent(
 		}
 		group := rList.GroupVersion
 		for _, r := range rList.APIResources {
-			if group == resourceGroupVersionKind.GroupVersion().String() && r.Kind == resource.GetKind() {
+			if group == resourceGroupVersionKind.GroupVersion().String() &&
+				r.Kind == resource.GetKind() {
 				r.Group = resourceGroupVersionKind.Group
 				r.Version = resourceGroupVersionKind.Version
 				r.Kind = resourceGroupVersionKind.Kind
@@ -207,7 +220,7 @@ func checkAPIResourceIsPresent(
 }
 
 // NewApplyOptions creates apply options for kubectl apply
-// Adapted from SDK v2 kubernetes/resource_kubectl_manifest.go
+// Adapted from SDK v2 kubernetes/resource_kubectl_manifest.go.
 func NewApplyOptions(yamlBody string, restConfig *restclient.Config) *apply.ApplyOptions {
 	applyOptions := &apply.ApplyOptions{
 		PrintFlags: genericclioptions.NewPrintFlags("created").WithTypeSetter(scheme.Scheme),
@@ -227,11 +240,11 @@ func NewApplyOptions(yamlBody string, restConfig *restclient.Config) *apply.Appl
 	}
 
 	applyOptions.Builder = k8sresource.NewBuilder(NewRestClientGetter(restConfig))
-	
+
 	return applyOptions
 }
 
-// ConfigureApplyOptions configures apply options with common settings
+// ConfigureApplyOptions configures apply options with common settings.
 func ConfigureApplyOptions(
 	opts *apply.ApplyOptions,
 	manifest *yaml.Manifest,
@@ -246,7 +259,7 @@ func ConfigureApplyOptions(
 			Filenames: []string{filename},
 		},
 	}
-	
+
 	opts.ToPrinter = func(string) (printers.ResourcePrinter, error) {
 		return printers.NewDiscardingPrinter(), nil
 	}
@@ -269,7 +282,7 @@ func ConfigureApplyOptions(
 	}
 }
 
-// IsNotFoundError checks if an error is a Kubernetes NotFound error
+// IsNotFoundError checks if an error is a Kubernetes NotFound error.
 func IsNotFoundError(err error) bool {
 	return errors.IsNotFound(err) || errors.IsGone(err)
 }

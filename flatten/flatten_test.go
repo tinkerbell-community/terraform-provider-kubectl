@@ -1,19 +1,20 @@
 package flatten
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFlattenMap(t *testing.T) {
 	testCases := []struct {
 		description string
-		test        map[string]interface{}
+		test        map[string]any
 		expected    map[string]string
 	}{
 		{
 			description: "Simple map with string value",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"test1": "test2",
 			},
 			expected: map[string]string{
@@ -22,7 +23,7 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "All primitive types",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"a_string":  "test2",
 				"a_boolean": true,
 				"a_number":  123,
@@ -37,14 +38,14 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "Map with empty keys",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"": "",
 			},
 			expected: map[string]string{},
 		},
 		{
 			description: "Empty map",
-			test:        map[string]interface{}{},
+			test:        map[string]any{},
 			expected:    map[string]string{},
 		},
 		{
@@ -54,9 +55,9 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "One level map",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"atest": "test",
-				"meta": map[string]interface{}{
+				"meta": map[string]any{
 					"annotations": map[string]string{
 						"helm.sh/hook": "crd-install",
 					},
@@ -69,9 +70,9 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "One level map empty value",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"atest": "test",
-				"meta":  map[string]interface{}{},
+				"meta":  map[string]any{},
 			},
 			expected: map[string]string{
 				"atest": "test",
@@ -79,7 +80,7 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "One level map, nil value",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"atest": "test",
 				"meta":  nil,
 			},
@@ -89,7 +90,7 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "One level slice",
-			test: map[string]interface{}{
+			test: map[string]any{
 				"my-slice": []string{"first", "second"},
 			},
 			expected: map[string]string{
@@ -100,8 +101,8 @@ func TestFlattenMap(t *testing.T) {
 		},
 		{
 			description: "Map with slice elements",
-			test: map[string]interface{}{
-				"meta": map[string]interface{}{
+			test: map[string]any{
+				"meta": map[string]any{
 					"my-slice": []string{"first", "second"},
 				},
 			},

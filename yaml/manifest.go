@@ -109,7 +109,7 @@ func (m *Manifest) String() string {
 }
 
 // AsYAML will produce a yaml representation of the manifest.
-// We do this by serializing to json and back again to ensure values and comments are cleansed
+// We do this by serializing to json and back again to ensure values and comments are cleansed.
 func (m *Manifest) AsYAML() (string, error) {
 	yamlJson, err := m.Raw.MarshalJSON()
 	if err != nil {

@@ -13,18 +13,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Ensure provider defined types fully satisfy framework interfaces
+// Ensure provider defined types fully satisfy framework interfaces.
 var (
 	_ resource.Resource              = &serverVersionResource{}
 	_ resource.ResourceWithConfigure = &serverVersionResource{}
 )
 
-// serverVersionResource defines the resource implementation
+// serverVersionResource defines the resource implementation.
 type serverVersionResource struct {
 	providerData *kubectlProviderData
 }
 
-// serverVersionResourceModel describes the resource data model
+// serverVersionResourceModel describes the resource data model.
 type serverVersionResourceModel struct {
 	ID         types.String `tfsdk:"id"`
 	Triggers   types.Map    `tfsdk:"triggers"`
@@ -38,12 +38,12 @@ type serverVersionResourceModel struct {
 	Platform   types.String `tfsdk:"platform"`
 }
 
-// NewServerVersionResource returns a new server version resource
+// NewServerVersionResource returns a new server version resource.
 func NewServerVersionResource() resource.Resource {
 	return &serverVersionResource{}
 }
 
-// Metadata returns the resource type name
+// Metadata returns the resource type name.
 func (r *serverVersionResource) Metadata(
 	ctx context.Context,
 	req resource.MetadataRequest,
@@ -52,7 +52,7 @@ func (r *serverVersionResource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_server_version"
 }
 
-// Schema defines the resource schema
+// Schema defines the resource schema.
 func (r *serverVersionResource) Schema(
 	ctx context.Context,
 	req resource.SchemaRequest,
@@ -112,7 +112,7 @@ func (r *serverVersionResource) Schema(
 	}
 }
 
-// Configure sets the provider data for the resource
+// Configure sets the provider data for the resource.
 func (r *serverVersionResource) Configure(
 	ctx context.Context,
 	req resource.ConfigureRequest,
@@ -137,7 +137,7 @@ func (r *serverVersionResource) Configure(
 	r.providerData = providerData
 }
 
-// Create creates a new resource (reads server version)
+// Create creates a new resource (reads server version).
 func (r *serverVersionResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -165,7 +165,7 @@ func (r *serverVersionResource) Create(
 	resp.Diagnostics.Append(diags...)
 }
 
-// Read reads the current state of the resource
+// Read reads the current state of the resource.
 func (r *serverVersionResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
@@ -193,7 +193,7 @@ func (r *serverVersionResource) Read(
 	resp.Diagnostics.Append(diags...)
 }
 
-// Update updates the resource (just reads new version)
+// Update updates the resource (just reads new version).
 func (r *serverVersionResource) Update(
 	ctx context.Context,
 	req resource.UpdateRequest,
@@ -221,7 +221,7 @@ func (r *serverVersionResource) Update(
 	resp.Diagnostics.Append(diags...)
 }
 
-// Delete removes the resource (just clears state, nothing in cluster)
+// Delete removes the resource (just clears state, nothing in cluster).
 func (r *serverVersionResource) Delete(
 	ctx context.Context,
 	req resource.DeleteRequest,
@@ -231,7 +231,7 @@ func (r *serverVersionResource) Delete(
 	// State is automatically removed by the framework
 }
 
-// readServerVersion is a helper that reads server version and updates the model
+// readServerVersion is a helper that reads server version and updates the model.
 func (r *serverVersionResource) readServerVersion(
 	ctx context.Context,
 	model *serverVersionResourceModel,

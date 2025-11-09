@@ -1,7 +1,7 @@
 package types
 
 type WaitFor struct {
-	Field []WaitForField
+	Field     []WaitForField
 	Condition []WaitForStatusCondition
 }
 type WaitForField struct {

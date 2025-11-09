@@ -21,7 +21,7 @@ var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServe
 }
 
 // testAccPreCheck validates that required environment variables or conditions
-// are met before running acceptance tests
+// are met before running acceptance tests.
 func testAccPreCheck(t *testing.T) {
 	// Check for kubeconfig or other Kubernetes authentication
 	// We'll check if either KUBECONFIG is set or ~/.kube/config exists
@@ -45,7 +45,7 @@ func testAccPreCheck(t *testing.T) {
 }
 
 // testAccCheckDestroy is a common check function to verify resources are destroyed
-// This can be customized per resource type
+// This can be customized per resource type.
 func testAccCheckDestroy(resourceType string) func(*terraform.State) error {
 	return func(s *terraform.State) error {
 		// This would typically check that the resource no longer exists
@@ -66,12 +66,12 @@ func testAccCheckDestroy(resourceType string) func(*terraform.State) error {
 	}
 }
 
-// Helper function to generate random names for test resources
+// Helper function to generate random names for test resources.
 func testAccRandomName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().Unix())
 }
 
-// Helper function to create test YAML manifests
+// Helper function to create test YAML manifests.
 func testAccKubectlManifestConfig(name, namespace, key, value string) string {
 	return fmt.Sprintf(`
 resource "kubectl_manifest" "test" {
@@ -88,14 +88,14 @@ resource "kubectl_manifest" "test" {
 `, name, namespace, key, value)
 }
 
-// Helper function for server version data source tests
+// Helper function for server version data source tests.
 func testAccKubectlServerVersionDataSourceConfig() string {
 	return `
 data "kubectl_server_version" "test" {}
 `
 }
 
-// Helper function for filename list data source tests
+// Helper function for filename list data source tests.
 func testAccKubectlFilenameListDataSourceConfig(pattern string) string {
 	return fmt.Sprintf(`
 data "kubectl_filename_list" "test" {
@@ -104,7 +104,7 @@ data "kubectl_filename_list" "test" {
 `, pattern)
 }
 
-// Helper function for file documents data source tests
+// Helper function for file documents data source tests.
 func testAccKubectlFileDocumentsDataSourceConfig(content string) string {
 	return fmt.Sprintf(`
 data "kubectl_file_documents" "test" {
@@ -113,7 +113,7 @@ data "kubectl_file_documents" "test" {
 `, content)
 }
 
-// Helper function for path documents data source tests
+// Helper function for path documents data source tests.
 func testAccKubectlPathDocumentsDataSourceConfig(pattern string, vars map[string]string) string {
 	varsBlock := ""
 	if len(vars) > 0 {
