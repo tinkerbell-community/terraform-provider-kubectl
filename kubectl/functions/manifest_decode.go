@@ -18,11 +18,19 @@ func NewManifestDecodeFunction() function.Function {
 
 type ManifestDecodeFunction struct{}
 
-func (f ManifestDecodeFunction) Metadata(_ context.Context, req function.MetadataRequest, resp *function.MetadataResponse) {
+func (f ManifestDecodeFunction) Metadata(
+	_ context.Context,
+	req function.MetadataRequest,
+	resp *function.MetadataResponse,
+) {
 	resp.Name = "manifest_decode"
 }
 
-func (f ManifestDecodeFunction) Definition(_ context.Context, req function.DefinitionRequest, resp *function.DefinitionResponse) {
+func (f ManifestDecodeFunction) Definition(
+	_ context.Context,
+	req function.DefinitionRequest,
+	resp *function.DefinitionResponse,
+) {
 	resp.Definition = function.Definition{
 		Summary:             "Decode a Kubernetes YAML manifest",
 		MarkdownDescription: "Given a YAML text containing a Kubernetes manifest, will decode and return an object representation of that resource.",
@@ -36,7 +44,11 @@ func (f ManifestDecodeFunction) Definition(_ context.Context, req function.Defin
 	}
 }
 
-func (f ManifestDecodeFunction) Run(ctx context.Context, req function.RunRequest, resp *function.RunResponse) {
+func (f ManifestDecodeFunction) Run(
+	ctx context.Context,
+	req function.RunRequest,
+	resp *function.RunResponse,
+) {
 	var manifest string
 
 	resp.Error = req.Arguments.Get(ctx, &manifest)

@@ -18,11 +18,19 @@ func NewManifestEncodeFunction() function.Function {
 
 type ManifestEncodeFunction struct{}
 
-func (f ManifestEncodeFunction) Metadata(_ context.Context, req function.MetadataRequest, resp *function.MetadataResponse) {
+func (f ManifestEncodeFunction) Metadata(
+	_ context.Context,
+	req function.MetadataRequest,
+	resp *function.MetadataResponse,
+) {
 	resp.Name = "manifest_encode"
 }
 
-func (f ManifestEncodeFunction) Definition(_ context.Context, req function.DefinitionRequest, resp *function.DefinitionResponse) {
+func (f ManifestEncodeFunction) Definition(
+	_ context.Context,
+	req function.DefinitionRequest,
+	resp *function.DefinitionResponse,
+) {
 	resp.Definition = function.Definition{
 		Summary:             "Encode an object to Kubernetes YAML",
 		MarkdownDescription: "Given an object representation of a Kubernetes manifest, will encode and return a YAML string for that resource.",
@@ -36,7 +44,11 @@ func (f ManifestEncodeFunction) Definition(_ context.Context, req function.Defin
 	}
 }
 
-func (f ManifestEncodeFunction) Run(ctx context.Context, req function.RunRequest, resp *function.RunResponse) {
+func (f ManifestEncodeFunction) Run(
+	ctx context.Context,
+	req function.RunRequest,
+	resp *function.RunResponse,
+) {
 	var manifest types.Dynamic
 
 	resp.Error = req.Arguments.Get(ctx, &manifest)

@@ -32,7 +32,12 @@ func decode(ctx context.Context, manifest string) (v types.Tuple, diags diag.Dia
 		}
 
 		if len(data) == 0 {
-			diags.Append(diag.NewWarningDiagnostic("Empty document", "encountered a YAML document with no values"))
+			diags.Append(
+				diag.NewWarningDiagnostic(
+					"Empty document",
+					"encountered a YAML document with no values",
+				),
+			)
 			continue
 		}
 
