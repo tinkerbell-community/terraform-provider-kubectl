@@ -8,8 +8,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/functions"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -461,9 +463,15 @@ func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resou
 // DataSources returns the data sources implemented by this provider.
 func (p *kubectlProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewFilenameListDataSource,
-		NewFileDocumentsDataSource,
-		NewPathDocumentsDataSource,
 		NewServerVersionDataSource,
+	}
+}
+
+// Functions returns the provider-defined functions implemented by this provider.
+func (p *kubectlProvider) Functions(ctx context.Context) []func() function.Function {
+	return []func() function.Function{
+		functions.NewManifestDecodeFunction,
+		functions.NewManifestDecodeMultiFunction,
+		functions.NewManifestEncodeFunction,
 	}
 }

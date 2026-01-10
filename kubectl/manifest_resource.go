@@ -896,13 +896,20 @@ func (r *manifestResource) applyManifest(
 	model.UID = types.StringValue(string(response.GetUID()))
 	model.LiveUID = types.StringValue(string(response.GetUID()))
 
-	// Set yaml_body_parsed with obfuscated sensitive fields
-	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, response, model.SensitiveFields)
+	// Set yaml_body_parsed with the parsed user input (not the server response)
+	// This represents what the user provided after parsing and namespace override
+	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, manifest, model.SensitiveFields)
 	if err == nil {
 		yamlStr, err := obfuscatedYaml.AsYAML()
 		if err == nil {
 			model.YAMLBodyParsed = types.StringValue(yamlStr)
+		} else {
+			// Fallback to original yaml_body if conversion fails
+			model.YAMLBodyParsed = model.YAMLBody
 		}
+	} else {
+		// Fallback to original yaml_body if obfuscation fails
+		model.YAMLBodyParsed = model.YAMLBody
 	}
 
 	log.Printf("[DEBUG] %v fetched successfully, set id to: %v", manifest, model.ID.ValueString())
@@ -1081,19 +1088,20 @@ func (r *manifestResource) readManifest(
 	model.YAMLInCluster = types.StringValue(fingerprint)
 	model.LiveManifestInCluster = types.StringValue(fingerprint)
 
-	// Set yaml_body_parsed with obfuscated sensitive fields
-	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, response, model.SensitiveFields)
+	// Set yaml_body_parsed with the parsed user input (not the server response)
+	// This represents what the user provided after parsing and namespace override
+	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, manifest, model.SensitiveFields)
 	if err == nil {
 		yamlStr, err := obfuscatedYaml.AsYAML()
 		if err == nil {
 			model.YAMLBodyParsed = types.StringValue(yamlStr)
 		} else {
-			// Fallback to empty string if YAML conversion fails
-			model.YAMLBodyParsed = types.StringValue("")
+			// Fallback to original yaml_body if conversion fails
+			model.YAMLBodyParsed = model.YAMLBody
 		}
 	} else {
-		// Fallback to empty string if obfuscation fails
-		model.YAMLBodyParsed = types.StringValue("")
+		// Fallback to original yaml_body if obfuscation fails
+		model.YAMLBodyParsed = model.YAMLBody
 	}
 
 	return nil
