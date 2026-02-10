@@ -51,50 +51,38 @@ type manifestResource struct {
 
 // manifestResourceModel describes the resource data model.
 type manifestResourceModel struct {
-	ID                    types.String   `tfsdk:"id"`
-	UID                   types.String   `tfsdk:"uid"`
-	LiveUID               types.String   `tfsdk:"live_uid"`
-	YAMLInCluster         types.String   `tfsdk:"yaml_incluster"`
-	LiveManifestInCluster types.String   `tfsdk:"live_manifest_incluster"`
-	APIVersion            types.String   `tfsdk:"api_version"`
-	Kind                  types.String   `tfsdk:"kind"`
-	Name                  types.String   `tfsdk:"name"`
-	Namespace             types.String   `tfsdk:"namespace"`
-	OverrideNamespace     types.String   `tfsdk:"override_namespace"`
-	YAMLBody              types.String   `tfsdk:"yaml_body"`
-	YAMLBodyParsed        types.String   `tfsdk:"yaml_body_parsed"`
-	SensitiveFields       types.List     `tfsdk:"sensitive_fields"`
-	ForceNew              types.Bool     `tfsdk:"force_new"`
-	ServerSideApply       types.Bool     `tfsdk:"server_side_apply"`
-	FieldManager          types.String   `tfsdk:"field_manager"`
-	ForceConflicts        types.Bool     `tfsdk:"force_conflicts"`
-	ApplyOnly             types.Bool     `tfsdk:"apply_only"`
-	IgnoreFields          types.List     `tfsdk:"ignore_fields"`
-	Wait                  types.Bool     `tfsdk:"wait"`
-	WaitForRollout        types.Bool     `tfsdk:"wait_for_rollout"`
-	ValidateSchema        types.Bool     `tfsdk:"validate_schema"`
-	WaitFor               types.List     `tfsdk:"wait_for"`
-	DeleteCascade         types.String   `tfsdk:"delete_cascade"`
-	Timeouts              timeouts.Value `tfsdk:"timeouts"`
+	ID             types.String   `tfsdk:"id"`
+	APIVersion     types.String   `tfsdk:"api_version"`
+	Kind           types.String   `tfsdk:"kind"`
+	Metadata       types.Dynamic  `tfsdk:"metadata"`
+	Spec           types.Dynamic  `tfsdk:"spec"`
+	Status         types.Dynamic  `tfsdk:"status"`
+	Object         types.Dynamic  `tfsdk:"object"`
+	ComputedFields types.List     `tfsdk:"computed_fields"`
+	ApplyOnly      types.Bool     `tfsdk:"apply_only"`
+	DeleteCascade  types.String   `tfsdk:"delete_cascade"`
+	Wait           types.List     `tfsdk:"wait"`
+	FieldManager   types.List     `tfsdk:"field_manager"`
+	Timeouts       timeouts.Value `tfsdk:"timeouts"`
 }
 
-// waitForModel describes the wait_for block.
-type waitForModel struct {
+// waitModel describes the wait block.
+type waitModel struct {
+	Rollout    types.Bool `tfsdk:"rollout"`
+	Fields     types.Map  `tfsdk:"fields"`
 	Conditions types.List `tfsdk:"condition"`
-	Fields     types.List `tfsdk:"field"`
 }
 
-// waitConditionModel describes a condition in wait_for.
+// waitConditionModel describes a condition in the wait block.
 type waitConditionModel struct {
 	Type   types.String `tfsdk:"type"`
 	Status types.String `tfsdk:"status"`
 }
 
-// waitFieldModel describes a field in wait_for.
-type waitFieldModel struct {
-	Key       types.String `tfsdk:"key"`
-	Value     types.String `tfsdk:"value"`
-	ValueType types.String `tfsdk:"value_type"`
+// fieldManagerModel describes the field_manager block.
+type fieldManagerModel struct {
+	Name           types.String `tfsdk:"name"`
+	ForceConflicts types.Bool   `tfsdk:"force_conflicts"`
 }
 
 // NewManifestResource returns a new manifest resource.
@@ -123,99 +111,47 @@ func (r *manifestResource) Schema(
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
-				MarkdownDescription: "Kubernetes resource self-link " +
-					"(format: apiVersion/kind/namespace/name or apiVersion/kind/name for cluster-scoped)",
+				MarkdownDescription: "Kubernetes resource identifier " +
+					"(format: apiVersion//kind//name//namespace or apiVersion//kind//name for cluster-scoped)",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"uid": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "UID of the resource as assigned by Kubernetes at creation time",
-			},
-			"live_uid": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Current UID of the resource in the cluster (for drift detection)",
-			},
-			"yaml_incluster": schema.StringAttribute{
-				Computed:            true,
-				Sensitive:           true,
-				MarkdownDescription: "Fingerprint of the resource as last seen in the cluster",
-			},
-			"live_manifest_incluster": schema.StringAttribute{
-				Computed:            true,
-				Sensitive:           true,
-				MarkdownDescription: "Current fingerprint of the resource in the cluster",
-			},
 			"api_version": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "API version (extracted from yaml_body)",
+				Required:            true,
+				MarkdownDescription: "Kubernetes API version (e.g., `v1`, `apps/v1`).",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"kind": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Resource kind (extracted from yaml_body)",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"name": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Resource name (extracted from yaml_body)",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"namespace": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Resource namespace (extracted from yaml_body, empty for cluster-scoped resources)",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"override_namespace": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "Override the namespace specified in yaml_body",
-			},
-			"yaml_body": schema.StringAttribute{
 				Required:            true,
-				Sensitive:           true,
-				MarkdownDescription: "YAML manifest content for the Kubernetes resource",
+				MarkdownDescription: "Kubernetes resource kind (e.g., `ConfigMap`, `Deployment`).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
-			"yaml_body_parsed": schema.StringAttribute{
+			"metadata": schema.DynamicAttribute{
+				Required:            true,
+				MarkdownDescription: "Standard Kubernetes object metadata containing at minimum `name` and optionally `namespace`, `labels`, `annotations`, etc.",
+			},
+			"spec": schema.DynamicAttribute{
+				Optional:            true,
+				MarkdownDescription: "Resource specification. Structure depends on the resource kind.",
+			},
+			"status": schema.DynamicAttribute{
 				Computed:            true,
-				MarkdownDescription: "Parsed YAML body with sensitive fields obfuscated (for display)",
+				MarkdownDescription: "Resource status as reported by the Kubernetes API server.",
 			},
-			"sensitive_fields": schema.ListAttribute{
+			"object": schema.DynamicAttribute{
+				Computed:            true,
+				MarkdownDescription: "The full resource object as returned by the API server.",
+			},
+			"computed_fields": schema.ListAttribute{
 				ElementType:         types.StringType,
 				Optional:            true,
-				MarkdownDescription: "JSON paths to fields that should be obfuscated in yaml_body_parsed",
-			},
-			"force_new": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
-				MarkdownDescription: "Force delete and recreate instead of update in-place. Default: false",
-			},
-			"server_side_apply": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
-				MarkdownDescription: "Use server-side apply instead of client-side apply. Default: false",
-			},
-			"field_manager": schema.StringAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             stringdefault.StaticString("kubectl"),
-				MarkdownDescription: "Field manager name for server-side apply. Default: kubectl",
-			},
-			"force_conflicts": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
-				MarkdownDescription: "Force apply even if there are field manager conflicts. Default: false",
+				MarkdownDescription: "List of manifest fields whose values may be altered by the API server during apply. " +
+					"Defaults to: `[\"metadata.annotations\", \"metadata.labels\"]`",
 			},
 			"apply_only": schema.BoolAttribute{
 				Optional:            true,
@@ -223,31 +159,10 @@ func (r *manifestResource) Schema(
 				Default:             booldefault.StaticBool(false),
 				MarkdownDescription: "Apply only (never delete the resource). Default: false",
 			},
-			"ignore_fields": schema.ListAttribute{
-				ElementType:         types.StringType,
-				Optional:            true,
-				MarkdownDescription: "JSON paths to ignore when detecting drift. Useful for fields managed by controllers.",
-			},
-			"wait": schema.BoolAttribute{
-				Optional:            true,
-				MarkdownDescription: "Wait for deletion to complete (finalizers). Default: false",
-			},
-			"wait_for_rollout": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(true),
-				MarkdownDescription: "Wait for Deployments/StatefulSets/DaemonSets to complete rollout. Default: true",
-			},
-			"validate_schema": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(true),
-				MarkdownDescription: "Validate YAML against Kubernetes OpenAPI schema. Default: true",
-			},
 			"delete_cascade": schema.StringAttribute{
 				Optional: true,
 				MarkdownDescription: "Cascade mode for deletion: Background or Foreground. " +
-					"Default: Background (or Foreground if wait is true)",
+					"Default: Background",
 				Validators: []validator.String{
 					stringvalidator.OneOf(
 						string(meta_v1.DeletePropagationBackground),
@@ -257,54 +172,65 @@ func (r *manifestResource) Schema(
 			},
 			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
 				Create: true,
+				Update: true,
+				Delete: true,
 			}),
 		},
 		Blocks: map[string]schema.Block{
-			"wait_for": schema.ListNestedBlock{
-				MarkdownDescription: "Wait for specific conditions or field values before considering operation complete",
+			"wait": schema.ListNestedBlock{
+				MarkdownDescription: "Configure waiter options.",
 				Validators: []validator.List{
 					listvalidator.SizeAtMost(1),
 				},
 				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"rollout": schema.BoolAttribute{
+							Optional:            true,
+							MarkdownDescription: "Wait for rollout to complete on resources that support `kubectl rollout status`.",
+						},
+						"fields": schema.MapAttribute{
+							ElementType:         types.StringType,
+							Optional:            true,
+							MarkdownDescription: "A map of field paths to expected values. Wait until all match.",
+						},
+					},
 					Blocks: map[string]schema.Block{
 						"condition": schema.ListNestedBlock{
-							MarkdownDescription: "Wait for status conditions to match",
+							MarkdownDescription: "Wait for status conditions to match.",
 							NestedObject: schema.NestedBlockObject{
 								Attributes: map[string]schema.Attribute{
 									"type": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "Condition type to check",
+										Optional:            true,
+										MarkdownDescription: "The type of condition.",
 									},
 									"status": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "Expected status value (e.g., True, False)",
+										Optional:            true,
+										MarkdownDescription: "The condition status.",
 									},
 								},
 							},
 						},
-						"field": schema.ListNestedBlock{
-							MarkdownDescription: "Wait for specific fields to match values",
-							NestedObject: schema.NestedBlockObject{
-								Attributes: map[string]schema.Attribute{
-									"key": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "JSON path to the field",
-									},
-									"value": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "Expected value",
-									},
-									"value_type": schema.StringAttribute{
-										Optional:            true,
-										Computed:            true,
-										Default:             stringdefault.StaticString("eq"),
-										MarkdownDescription: "Value comparison type: eq (equals) or regex. Default: eq",
-										Validators: []validator.String{
-											stringvalidator.OneOf("eq", "regex"),
-										},
-									},
-								},
-							},
+					},
+				},
+			},
+			"field_manager": schema.ListNestedBlock{
+				MarkdownDescription: "Configure field manager options for server-side apply.",
+				Validators: []validator.List{
+					listvalidator.SizeAtMost(1),
+				},
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"name": schema.StringAttribute{
+							Optional:            true,
+							Computed:            true,
+							Default:             stringdefault.StaticString("Terraform"),
+							MarkdownDescription: "The name to use for the field manager when applying server-side. Default: Terraform",
+						},
+						"force_conflicts": schema.BoolAttribute{
+							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
+							MarkdownDescription: "Force changes against conflicts. Default: false",
 						},
 					},
 				},
