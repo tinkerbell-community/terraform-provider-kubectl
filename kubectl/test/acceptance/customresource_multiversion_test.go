@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/provider"
+	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/go-hclog"
 )
 

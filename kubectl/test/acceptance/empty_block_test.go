@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/provider"
+	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
 	tfstatehelper "github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/state"
 	"github.com/hashicorp/go-hclog"
 )

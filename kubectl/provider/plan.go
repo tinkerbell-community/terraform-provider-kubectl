@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -507,7 +507,7 @@ func (s *RawProviderServer) PlanResourceChange(
 							!wasCfg.(tftypes.Value).Equal(nowCfg.(tftypes.Value))
 						if hasChanged {
 							h, ok := hints[morph.ValueToTypePath(ap).String()]
-							if ok && h == kubectl.PreserveUnknownFieldsLabel {
+							if ok && h == openapi.PreserveUnknownFieldsLabel {
 								resp.Diagnostics = append(resp.Diagnostics, &tfprotov6.Diagnostic{
 									Severity: tfprotov6.DiagnosticSeverityWarning,
 									Summary: fmt.Sprintf(

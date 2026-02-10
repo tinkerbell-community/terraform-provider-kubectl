@@ -75,13 +75,13 @@ func getTypeFromSchema(
 	// Check if attribute type is tagged as 'x-kubernetes-preserve-unknown-fields' in OpenAPI.
 	// If so, we add a type hint to indicate this and return DynamicPseudoType for this attribute,
 	// since we have no further structural information about it.
-	if xpufJSON, ok := elem.Extensions[kubectl.PreserveUnknownFieldsLabel]; ok {
+	if xpufJSON, ok := elem.Extensions[PreserveUnknownFieldsLabel]; ok {
 		var xpuf bool
 		v, err := xpufJSON.(json.RawMessage).MarshalJSON()
 		if err == nil {
 			err = json.Unmarshal(v, &xpuf)
 			if err == nil && xpuf {
-				th[ap.String()] = kubectl.PreserveUnknownFieldsLabel
+				th[ap.String()] = PreserveUnknownFieldsLabel
 			}
 		}
 	}

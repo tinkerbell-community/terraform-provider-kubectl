@@ -10,7 +10,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/provider"
+	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
 	tfstatehelper "github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/state"
 	"github.com/hashicorp/go-hclog"

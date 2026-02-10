@@ -478,6 +478,7 @@ func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resou
 func (p *kubectlProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewServerVersionDataSource,
+		NewManifestDataSource,
 	}
 }
 
