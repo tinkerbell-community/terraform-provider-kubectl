@@ -148,7 +148,7 @@ func ToTFValue(
 
 func sliceToTFDynamicValue(
 	in []any,
-	st tftypes.Type,
+	_ tftypes.Type,
 	th map[string]string,
 	at *tftypes.AttributePath,
 ) (tftypes.Value, error) {
@@ -348,7 +348,7 @@ func mapToTFObjectValue(
 
 func mapToTFDynamicValue(
 	in map[string]any,
-	st tftypes.Type,
+	_ tftypes.Type,
 	th map[string]string,
 	at *tftypes.AttributePath,
 ) (tftypes.Value, error) {

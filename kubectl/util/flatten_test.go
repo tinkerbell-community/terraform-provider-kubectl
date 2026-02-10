@@ -1,4 +1,4 @@
-package flatten
+package util
 
 import (
 	"testing"

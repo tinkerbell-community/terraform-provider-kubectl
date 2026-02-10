@@ -12,7 +12,7 @@ import (
 )
 
 // FromTFValue converts a Terraform specific tftypes.Value type object
-// into a Kubernetes dynamic client specific unstructured object
+// into a Kubernetes dynamic client specific unstructured object.
 func FromTFValue(in tftypes.Value, th map[string]string, ap *tftypes.AttributePath) (any, error) {
 	var err error
 	if !in.IsKnown() {

@@ -160,4 +160,6 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
 
+replace github.com/alekc/terraform-provider-kubectl => ./
+
 tool github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs

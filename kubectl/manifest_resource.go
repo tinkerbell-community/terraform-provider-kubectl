@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/flatten"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/alekc/terraform-provider-kubectl/yaml"
 	"github.com/cenkalti/backoff/v4"
@@ -1664,8 +1663,8 @@ func (r *manifestResource) generateFingerprints(
 	}
 
 	// Flatten both manifests for comparison
-	flattenedUser := flatten.Flatten(userProvided.Raw.Object)
-	flattenedLive := flatten.Flatten(liveManifest.Object)
+	flattenedUser := util.Flatten(userProvided.Raw.Object)
+	flattenedLive := util.Flatten(liveManifest.Object)
 
 	// Remove control fields and ignore fields
 	fieldsToTrim := append(kubernetesControlFields, ignoreFields...)

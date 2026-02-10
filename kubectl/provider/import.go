@@ -9,7 +9,7 @@ import (
 
 	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
-	"github.com/alekc/terraform-provider-kubectl/util"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
