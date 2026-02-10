@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -234,7 +234,7 @@ func (s *RawProviderServer) PlanResourceChange(
 				s.logger.Error("[computed_fields] cannot extract element from list")
 				continue
 			}
-			atp, err := FieldPathToTftypesPath(vs)
+			atp, err := api.FieldPathToTftypesPath(vs)
 			if err != nil {
 				s.logger.Error(
 					"[Configure]",
@@ -507,7 +507,7 @@ func (s *RawProviderServer) PlanResourceChange(
 							!wasCfg.(tftypes.Value).Equal(nowCfg.(tftypes.Value))
 						if hasChanged {
 							h, ok := hints[morph.ValueToTypePath(ap).String()]
-							if ok && h == openapi.PreserveUnknownFieldsLabel {
+							if ok && h == api.PreserveUnknownFieldsLabel {
 								resp.Diagnostics = append(resp.Diagnostics, &tfprotov6.Diagnostic{
 									Severity: tfprotov6.DiagnosticSeverityWarning,
 									Summary: fmt.Sprintf(

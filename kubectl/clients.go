@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -64,8 +64,8 @@ func (p *kubectlProviderData) getRestClient() (rest.Interface, error) {
 }
 
 // getOAPIv2Foundry returns an interface to request tftype types from an OpenAPIv2 spec.
-func (p *kubectlProviderData) getOAPIv2Foundry() (openapi.Foundry, error) {
-	return p.OAPIFoundry.Get(func() (openapi.Foundry, error) {
+func (p *kubectlProviderData) getOAPIv2Foundry() (api.Foundry, error) {
+	return p.OAPIFoundry.Get(func() (api.Foundry, error) {
 		rc, err := p.getRestClient()
 		if err != nil {
 			return nil, fmt.Errorf("failed get OpenAPI spec: %s", err)
@@ -77,7 +77,7 @@ func (p *kubectlProviderData) getOAPIv2Foundry() (openapi.Foundry, error) {
 			return nil, fmt.Errorf("failed get OpenAPI spec: %s", err)
 		}
 
-		oapif, err := openapi.NewFoundryFromSpecV2(rs)
+		oapif, err := api.NewFoundryFromSpecV2(rs)
 		if err != nil {
 			return nil, fmt.Errorf("failed construct OpenAPI foundry: %s", err)
 		}

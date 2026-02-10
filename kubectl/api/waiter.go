@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package kubectl
+package api
 
 import (
 	"context"
@@ -22,7 +22,8 @@ import (
 	"k8s.io/kubectl/pkg/polymorphichelpers"
 )
 
-const waiterSleepTime = 1 * time.Second
+// WaiterSleepTime is the default sleep interval between status checks.
+const WaiterSleepTime = 1 * time.Second
 
 // Waiter is a simple interface to implement a blocking wait operation.
 type Waiter interface {
@@ -34,51 +35,9 @@ type WaiterError struct {
 	Reason string
 }
 
+// Error implements the error interface.
 func (e WaiterError) Error() string {
 	return fmt.Sprintf("timed out waiting on %v", e.Reason)
-}
-
-// NewResourceWaiterFromConfig constructs an appropriate Waiter from framework wait model values.
-// This adapts the raw provider's NewResourceWaiter for use with the framework resource.
-func NewResourceWaiterFromConfig(
-	resource dynamic.ResourceInterface,
-	resourceName string,
-	resourceType tftypes.Type,
-	typeHints map[string]string,
-	rollout bool,
-	fieldMatchers []FieldMatcher,
-	conditions []ConditionMatcher,
-	logger hclog.Logger,
-) Waiter {
-	if rollout {
-		return &RolloutWaiter{
-			resource:     resource,
-			resourceName: resourceName,
-			logger:       logger,
-		}
-	}
-
-	if len(conditions) > 0 {
-		return &ConditionsWaiterV2{
-			resource:     resource,
-			resourceName: resourceName,
-			conditions:   conditions,
-			logger:       logger,
-		}
-	}
-
-	if len(fieldMatchers) > 0 {
-		return &FieldWaiter{
-			resource:      resource,
-			resourceName:  resourceName,
-			resourceType:  resourceType,
-			typeHints:     typeHints,
-			fieldMatchers: fieldMatchers,
-			logger:        logger,
-		}
-	}
-
-	return &NoopWaiter{}
 }
 
 // FieldMatcher contains a tftypes.AttributePath to a field and a regexp to match on it.
@@ -93,20 +52,148 @@ type ConditionMatcher struct {
 	Status string
 }
 
+// NewResourceWaiterFromConfig constructs an appropriate Waiter from framework wait model values.
+// This is used by the terraform-plugin-framework resource implementation.
+func NewResourceWaiterFromConfig(
+	resource dynamic.ResourceInterface,
+	resourceName string,
+	resourceType tftypes.Type,
+	typeHints map[string]string,
+	rollout bool,
+	fieldMatchers []FieldMatcher,
+	conditions []ConditionMatcher,
+	logger hclog.Logger,
+) Waiter {
+	if rollout {
+		return &RolloutWaiter{
+			Resource:     resource,
+			ResourceName: resourceName,
+			Logger:       logger,
+		}
+	}
+
+	if len(conditions) > 0 {
+		return &ConditionsWaiterV2{
+			Resource:     resource,
+			ResourceName: resourceName,
+			Conditions:   conditions,
+			Logger:       logger,
+		}
+	}
+
+	if len(fieldMatchers) > 0 {
+		return &FieldWaiter{
+			Resource:      resource,
+			ResourceName:  resourceName,
+			ResourceType:  resourceType,
+			TypeHints:     typeHints,
+			FieldMatchers: fieldMatchers,
+			Logger:        logger,
+		}
+	}
+
+	return &NoopWaiter{}
+}
+
+// NewResourceWaiter constructs an appropriate Waiter using the supplied waitForBlock
+// configuration from a tftypes.Value. This is used by the raw tfprotov6 provider.
+func NewResourceWaiter(
+	resource dynamic.ResourceInterface,
+	resourceName string,
+	resourceType tftypes.Type,
+	th map[string]string,
+	waitForBlock tftypes.Value,
+	hl hclog.Logger,
+) (Waiter, error) {
+	var waitForBlockVal map[string]tftypes.Value
+	err := waitForBlock.As(&waitForBlockVal)
+	if err != nil {
+		return nil, err
+	}
+
+	if v, ok := waitForBlockVal["rollout"]; ok {
+		var rollout bool
+		v.As(&rollout)
+		if rollout {
+			return &RolloutWaiter{
+				Resource:     resource,
+				ResourceName: resourceName,
+				Logger:       hl,
+			}, nil
+		}
+	}
+
+	if v, ok := waitForBlockVal["condition"]; ok {
+		var conditionsBlocks []tftypes.Value
+		v.As(&conditionsBlocks)
+		if len(conditionsBlocks) > 0 {
+			return &ConditionsWaiter{
+				Resource:     resource,
+				ResourceName: resourceName,
+				Conditions:   conditionsBlocks,
+				Logger:       hl,
+			}, nil
+		}
+	}
+
+	fields, ok := waitForBlockVal["fields"]
+	if !ok || fields.IsNull() || !fields.IsKnown() {
+		return &NoopWaiter{}, nil
+	}
+
+	if !fields.Type().Is(tftypes.Map{}) {
+		return nil, fmt.Errorf(`"fields" should be a map of strings`)
+	}
+
+	var vm map[string]tftypes.Value
+	fields.As(&vm)
+	var matchers []FieldMatcher
+
+	for k, v := range vm {
+		var expr string
+		v.As(&expr)
+		var re *regexp.Regexp
+		if expr == "*" {
+			re = regexp.MustCompile("(.*)?")
+		} else {
+			var err error
+			re, err = regexp.Compile(expr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid regular expression: %q", expr)
+			}
+		}
+
+		p, err := FieldPathToTftypesPath(k)
+		if err != nil {
+			return nil, err
+		}
+		matchers = append(matchers, FieldMatcher{Path: p, ValueMatcher: re})
+	}
+
+	return &FieldWaiter{
+		Resource:      resource,
+		ResourceName:  resourceName,
+		ResourceType:  resourceType,
+		TypeHints:     th,
+		FieldMatchers: matchers,
+		Logger:        hl,
+	}, nil
+}
+
 // FieldWaiter will wait for a set of fields to be set,
 // or have a particular value.
 type FieldWaiter struct {
-	resource      dynamic.ResourceInterface
-	resourceName  string
-	resourceType  tftypes.Type
-	typeHints     map[string]string
-	fieldMatchers []FieldMatcher
-	logger        hclog.Logger
+	Resource      dynamic.ResourceInterface
+	ResourceName  string
+	ResourceType  tftypes.Type
+	TypeHints     map[string]string
+	FieldMatchers []FieldMatcher
+	Logger        hclog.Logger
 }
 
 // Wait blocks until all of the FieldMatchers configured evaluate to true.
 func (w *FieldWaiter) Wait(ctx context.Context) error {
-	w.logger.Info("[Wait] Waiting until fields match...\n")
+	w.Logger.Info("[Wait] Waiting until fields match...\n")
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
 			if time.Now().After(deadline) {
@@ -114,7 +201,7 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 			}
 		}
 
-		res, err := w.resource.Get(ctx, w.resourceName, v1.GetOptions{})
+		res, err := w.Resource.Get(ctx, w.ResourceName, v1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -126,12 +213,12 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 			delete(meta, "managedFields")
 		}
 
-		w.logger.Trace("[Wait]", "API Response", resObj)
+		w.Logger.Trace("[Wait]", "API Response", resObj)
 
 		obj, err := payload.ToTFValue(
 			resObj,
-			w.resourceType,
-			w.typeHints,
+			w.ResourceType,
+			w.TypeHints,
 			tftypes.NewAttributePath(),
 		)
 		if err != nil {
@@ -139,7 +226,7 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 		}
 
 		done, err := func(obj tftypes.Value) (bool, error) {
-			for _, m := range w.fieldMatchers {
+			for _, m := range w.FieldMatchers {
 				vi, rp, err := tftypes.WalkAttributePath(obj, m.Path)
 				if err != nil {
 					return false, err
@@ -180,11 +267,11 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 		}(obj)
 
 		if done {
-			w.logger.Info("[Wait] Done waiting.\n")
+			w.Logger.Info("[Wait] Done waiting.\n")
 			return err
 		}
 
-		time.Sleep(waiterSleepTime)
+		time.Sleep(WaiterSleepTime)
 	}
 }
 
@@ -248,14 +335,14 @@ func FieldPathToTftypesPath(fieldPath string) (*tftypes.AttributePath, error) {
 // RolloutWaiter will wait for a resource that has a StatusViewer to
 // finish rolling out.
 type RolloutWaiter struct {
-	resource     dynamic.ResourceInterface
-	resourceName string
-	logger       hclog.Logger
+	Resource     dynamic.ResourceInterface
+	ResourceName string
+	Logger       hclog.Logger
 }
 
 // Wait uses StatusViewer to determine if the rollout is done.
 func (w *RolloutWaiter) Wait(ctx context.Context) error {
-	w.logger.Info("[Wait] Waiting until rollout complete...\n")
+	w.Logger.Info("[Wait] Waiting until rollout complete...\n")
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
 			if time.Now().After(deadline) {
@@ -263,7 +350,7 @@ func (w *RolloutWaiter) Wait(ctx context.Context) error {
 			}
 		}
 
-		res, err := w.resource.Get(ctx, w.resourceName, v1.GetOptions{})
+		res, err := w.Resource.Get(ctx, w.ResourceName, v1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -286,25 +373,26 @@ func (w *RolloutWaiter) Wait(ctx context.Context) error {
 			break
 		}
 
-		time.Sleep(waiterSleepTime)
+		time.Sleep(WaiterSleepTime)
 	}
 
-	w.logger.Info("[Wait] Rollout complete\n")
+	w.Logger.Info("[Wait] Rollout complete\n")
 	return nil
 }
 
 // ConditionsWaiterV2 will wait for the specified conditions on
 // the resource to be met, using ConditionMatcher values.
+// Used by the terraform-plugin-framework resource.
 type ConditionsWaiterV2 struct {
-	resource     dynamic.ResourceInterface
-	resourceName string
-	conditions   []ConditionMatcher
-	logger       hclog.Logger
+	Resource     dynamic.ResourceInterface
+	ResourceName string
+	Conditions   []ConditionMatcher
+	Logger       hclog.Logger
 }
 
 // Wait checks all the configured conditions have been met.
 func (w *ConditionsWaiterV2) Wait(ctx context.Context) error {
-	w.logger.Info("[Wait] Waiting for conditions...\n")
+	w.Logger.Info("[Wait] Waiting for conditions...\n")
 
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
@@ -313,7 +401,7 @@ func (w *ConditionsWaiterV2) Wait(ctx context.Context) error {
 			}
 		}
 
-		res, err := w.resource.Get(ctx, w.resourceName, v1.GetOptions{})
+		res, err := w.Resource.Get(ctx, w.ResourceName, v1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -324,7 +412,7 @@ func (w *ConditionsWaiterV2) Wait(ctx context.Context) error {
 		if status, ok := res.Object["status"].(map[string]any); ok {
 			if conditions, ok := status["conditions"].([]any); ok && len(conditions) > 0 {
 				conditionsMet := true
-				for _, c := range w.conditions {
+				for _, c := range w.Conditions {
 					conditionMet := false
 					for _, cc := range conditions {
 						ccc, ok := cc.(map[string]any)
@@ -343,9 +431,69 @@ func (w *ConditionsWaiterV2) Wait(ctx context.Context) error {
 				}
 			}
 		}
-		time.Sleep(waiterSleepTime)
+		time.Sleep(WaiterSleepTime)
 	}
 
-	w.logger.Info("[Wait] All conditions met.\n")
+	w.Logger.Info("[Wait] All conditions met.\n")
+	return nil
+}
+
+// ConditionsWaiter will wait for the specified conditions on
+// the resource to be met, using tftypes.Value condition blocks.
+// Used by the raw tfprotov6 provider.
+type ConditionsWaiter struct {
+	Resource     dynamic.ResourceInterface
+	ResourceName string
+	Conditions   []tftypes.Value
+	Logger       hclog.Logger
+}
+
+// Wait checks all the configured conditions have been met.
+func (w *ConditionsWaiter) Wait(ctx context.Context) error {
+	w.Logger.Info("[Wait] Waiting for conditions...\n")
+
+	for {
+		if deadline, ok := ctx.Deadline(); ok {
+			if time.Now().After(deadline) {
+				return WaiterError{Reason: "conditions"}
+			}
+		}
+
+		res, err := w.Resource.Get(ctx, w.ResourceName, v1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if errors.IsGone(err) {
+			return fmt.Errorf("resource was deleted")
+		}
+
+		if status, ok := res.Object["status"].(map[string]any); ok {
+			if conditions, ok := status["conditions"].([]any); ok && len(conditions) > 0 {
+				conditionsMet := true
+				for _, c := range w.Conditions {
+					var condition map[string]tftypes.Value
+					c.As(&condition)
+					var conditionType, conditionStatus string
+					condition["type"].As(&conditionType)
+					condition["status"].As(&conditionStatus)
+					conditionMet := false
+					for _, cc := range conditions {
+						ccc := cc.(map[string]any)
+						if ccc["type"].(string) == conditionType {
+							conditionMet = ccc["status"].(string) == conditionStatus
+							break
+						}
+					}
+					conditionsMet = conditionsMet && conditionMet
+				}
+				if conditionsMet {
+					break
+				}
+			}
+		}
+		time.Sleep(WaiterSleepTime)
+	}
+
+	w.Logger.Info("[Wait] All conditions met.\n")
 	return nil
 }

@@ -1,4 +1,4 @@
-package util
+package api
 
 import (
 	"context"
@@ -95,7 +95,7 @@ func (r *RestClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 	return nil
 }
 
-// GetRestClientFromUnstructured creates a dynamic client for the given manifest
+// GetRestClientFromUnstructured creates a dynamic client for the given manifest.
 // Adapted from SDK v2 kubernetes/resource_kubectl_manifest.go.
 func GetRestClientFromUnstructured(
 	ctx context.Context,
@@ -115,7 +115,7 @@ func GetRestClientFromUnstructured(
 		}
 
 		// Validate that the APIVersion provided in the YAML is valid for this cluster
-		apiResource, exists := checkAPIResourceIsPresent(resources, *manifest.Raw)
+		apiResource, exists := CheckAPIResourceIsPresent(resources, *manifest.Raw)
 		if !exists {
 			// API not found, try invalidating cache and retrying
 			// This handles the case when a CRD is being created by another resource
@@ -126,7 +126,7 @@ func GetRestClientFromUnstructured(
 			}
 
 			// Check for resource again
-			apiResource, exists = checkAPIResourceIsPresent(resources, *manifest.Raw)
+			apiResource, exists = CheckAPIResourceIsPresent(resources, *manifest.Raw)
 			if !exists {
 				return RestClientResultFromInvalidTypeErr(
 					fmt.Errorf(
@@ -188,9 +188,9 @@ func GetRestClientFromUnstructured(
 	}
 }
 
-// checkAPIResourceIsPresent loops through available APIResources and
+// CheckAPIResourceIsPresent loops through available APIResources and
 // checks if there is a resource for the APIVersion and Kind defined in the resource.
-func checkAPIResourceIsPresent(
+func CheckAPIResourceIsPresent(
 	available []*meta_v1.APIResourceList,
 	resource meta_v1_unstruct.Unstructured,
 ) (*meta_v1.APIResource, bool) {
@@ -219,7 +219,7 @@ func checkAPIResourceIsPresent(
 	return nil, false
 }
 
-// NewApplyOptions creates apply options for kubectl apply
+// NewApplyOptions creates apply options for kubectl apply.
 // Adapted from SDK v2 kubernetes/resource_kubectl_manifest.go.
 func NewApplyOptions(yamlBody string, restConfig *restclient.Config) *apply.ApplyOptions {
 	applyOptions := &apply.ApplyOptions{
@@ -285,4 +285,40 @@ func ConfigureApplyOptions(
 // IsNotFoundError checks if an error is a Kubernetes NotFound error.
 func IsNotFoundError(err error) bool {
 	return errors.IsNotFound(err) || errors.IsGone(err)
+}
+
+// MapRemoveNulls recursively removes null values from a map.
+// This is needed because Kubernetes API doesn't accept null values.
+func MapRemoveNulls(in map[string]any) map[string]any {
+	for k, v := range in {
+		switch tv := v.(type) {
+		case []any:
+			in[k] = SliceRemoveNulls(tv)
+		case map[string]any:
+			in[k] = MapRemoveNulls(tv)
+		default:
+			if v == nil {
+				delete(in, k)
+			}
+		}
+	}
+	return in
+}
+
+// SliceRemoveNulls recursively removes null values from a slice.
+func SliceRemoveNulls(in []any) []any {
+	s := []any{}
+	for _, v := range in {
+		switch tv := v.(type) {
+		case []any:
+			s = append(s, SliceRemoveNulls(tv))
+		case map[string]any:
+			s = append(s, MapRemoveNulls(tv))
+		default:
+			if v != nil {
+				s = append(s, v)
+			}
+		}
+	}
+	return s
 }

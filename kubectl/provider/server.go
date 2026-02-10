@@ -6,7 +6,7 @@ package provider
 import (
 	"context"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"google.golang.org/grpc/codes"
@@ -42,7 +42,7 @@ type RawProviderServer struct {
 	discoveryClient             cache[discovery.DiscoveryInterface]
 	restMapper                  cache[meta.RESTMapper]
 	restClient                  cache[rest.Interface]
-	OAPIFoundry                 cache[openapi.Foundry]
+	OAPIFoundry                 cache[api.Foundry]
 	crds                        cache[[]unstructured.Unstructured]
 	checkValidCredentialsResult cache[[]*tfprotov6.Diagnostic]
 

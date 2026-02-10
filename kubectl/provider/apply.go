@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
@@ -116,7 +117,7 @@ func (s *RawProviderServer) ApplyResourceChange(
 				s.logger.Error("[computed_fields] cannot extract element from list")
 				continue
 			}
-			atp, err := FieldPathToTftypesPath(vs)
+			atp, err := api.FieldPathToTftypesPath(vs)
 			if err != nil {
 				s.logger.Error(
 					"[Configure]",
@@ -462,7 +463,7 @@ func (s *RawProviderServer) ApplyResourceChange(
 		if !waitConfig.IsNull() {
 			err = s.waitForCompletion(ctxDeadline, waitConfig, rs, rname, wt, th)
 			if err != nil {
-				if reason, ok := err.(WaiterError); ok {
+				if reason, ok := err.(api.WaiterError); ok {
 					resp.Diagnostics = append(resp.Diagnostics,
 						&tfprotov6.Diagnostic{
 							Severity: tfprotov6.DiagnosticSeverityError,

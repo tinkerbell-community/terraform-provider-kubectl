@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/alekc/terraform-provider-kubectl/yaml"
 	"k8s.io/apimachinery/pkg/api/errors"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,7 +58,7 @@ func (r *manifestResource) applyManifestV2(
 
 	// Create REST client for this resource type
 	manifest := yaml.NewFromUnstructured(uo)
-	restClient := util.GetRestClientFromUnstructured(
+	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
 		r.providerData.MainClientset,
@@ -70,7 +70,7 @@ func (r *manifestResource) applyManifestV2(
 
 	// Remove nulls from the object before applying
 	content := uo.UnstructuredContent()
-	cleanedContent := mapRemoveNulls(content)
+	cleanedContent := api.MapRemoveNulls(content)
 	uo.SetUnstructuredContent(cleanedContent)
 
 	// Marshal to JSON for server-side apply
@@ -127,7 +127,7 @@ func (r *manifestResource) readManifestV2(
 	}
 
 	manifest := yaml.NewFromUnstructured(tempUo)
-	restClient := util.GetRestClientFromUnstructured(
+	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
 		r.providerData.MainClientset,
@@ -185,7 +185,7 @@ func (r *manifestResource) deleteManifestV2(
 	}
 
 	manifest := yaml.NewFromUnstructured(uo)
-	restClient := util.GetRestClientFromUnstructured(
+	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
 		r.providerData.MainClientset,
@@ -229,37 +229,4 @@ func (r *manifestResource) deleteManifestV2(
 	return nil
 }
 
-// mapRemoveNulls recursively removes null values from a map.
-// This is needed because Kubernetes API doesn't accept null values.
-func mapRemoveNulls(in map[string]any) map[string]any {
-	for k, v := range in {
-		switch tv := v.(type) {
-		case []any:
-			in[k] = sliceRemoveNulls(tv)
-		case map[string]any:
-			in[k] = mapRemoveNulls(tv)
-		default:
-			if v == nil {
-				delete(in, k)
-			}
-		}
-	}
-	return in
-}
-
-func sliceRemoveNulls(in []any) []any {
-	s := []any{}
-	for _, v := range in {
-		switch tv := v.(type) {
-		case []any:
-			s = append(s, sliceRemoveNulls(tv))
-		case map[string]any:
-			s = append(s, mapRemoveNulls(tv))
-		default:
-			if v != nil {
-				s = append(s, v)
-			}
-		}
-	}
-	return s
-}
+// mapRemoveNulls and sliceRemoveNulls have been moved to api.MapRemoveNulls and api.SliceRemoveNulls.

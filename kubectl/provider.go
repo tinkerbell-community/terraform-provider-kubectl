@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/functions"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -53,7 +53,7 @@ type kubectlProviderData struct {
 	discoveryClient cache[discovery.DiscoveryInterface]
 	restMapper      cache[meta.RESTMapper]
 	restClient      cache[restclient.Interface]
-	OAPIFoundry     cache[openapi.Foundry]
+	OAPIFoundry     cache[api.Foundry]
 	crds            cache[[]unstructured.Unstructured]
 }
 

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"k8s.io/apimachinery/pkg/api/meta"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -107,11 +107,11 @@ func (ps *RawProviderServer) TFTypeFromOpenAPI(
 		)
 	}
 	if crdSchema != nil {
-		js, err := json.Marshal(openapi.SchemaToSpec("", crdSchema.(map[string]any)))
+		js, err := json.Marshal(api.SchemaToSpec("", crdSchema.(map[string]any)))
 		if err != nil {
 			return nil, hints, fmt.Errorf("CRD schema fails to marshal into JSON: %s", err)
 		}
-		oapiv3, err := openapi.NewFoundryFromSpecV3(js)
+		oapiv3, err := api.NewFoundryFromSpecV3(js)
 		if err != nil {
 			return nil, hints, err
 		}
@@ -152,7 +152,7 @@ func (ps *RawProviderServer) TFTypeFromOpenAPI(
 		if _, ok := atts["kind"]; !ok {
 			atts["kind"] = tftypes.String
 		}
-		metaType, _, err := oapi.GetTypeByGVK(openapi.ObjectMetaGVK)
+		metaType, _, err := oapi.GetTypeByGVK(api.ObjectMetaGVK)
 		if err != nil {
 			return nil, hints, fmt.Errorf("failed to generate tftypes for v1.ObjectMeta: %s", err)
 		}

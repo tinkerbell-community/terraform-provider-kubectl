@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
@@ -821,7 +822,7 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 		var cfList []string
 		plan.ComputedFields.ElementsAs(ctx, &cfList, false)
 		for _, cf := range cfList {
-			atp, err := FieldPathToTftypesPath(cf)
+			atp, err := api.FieldPathToTftypesPath(cf)
 			if err != nil {
 				log.Printf("[DEBUG] Could not parse computed_fields path %s: %v", cf, err)
 				continue
@@ -973,10 +974,10 @@ func (r *manifestResource) applyManifest(
 			return fmt.Errorf("failed to set up rollout wait: %w", err)
 		}
 
-		waiter := &RolloutWaiter{
-			resource:     rs,
-			resourceName: name,
-			logger:       r.providerData.logger,
+		waiter := &api.RolloutWaiter{
+			Resource:     rs,
+			ResourceName: name,
+			Logger:       r.providerData.logger,
 		}
 
 		if len(errorOnConditions) > 0 {
@@ -1024,14 +1025,14 @@ func (r *manifestResource) applyManifest(
 		}
 
 		// Build field matchers
-		var fieldMatchers []FieldMatcher
+		var fieldMatchers []api.FieldMatcher
 		for _, f := range waitFields {
 			valueType := "eq"
 			if !f.ValueType.IsNull() && f.ValueType.ValueString() != "" {
 				valueType = f.ValueType.ValueString()
 			}
 
-			p, pErr := FieldPathToTftypesPath(f.Key.ValueString())
+			p, pErr := api.FieldPathToTftypesPath(f.Key.ValueString())
 			if pErr != nil {
 				return fmt.Errorf("invalid field path %q: %w", f.Key.ValueString(), pErr)
 			}
@@ -1047,23 +1048,23 @@ func (r *manifestResource) applyManifest(
 				re = regexp.MustCompile("^" + regexp.QuoteMeta(f.Value.ValueString()) + "$")
 			}
 
-			fieldMatchers = append(fieldMatchers, FieldMatcher{
+			fieldMatchers = append(fieldMatchers, api.FieldMatcher{
 				Path:         p,
 				ValueMatcher: re,
 			})
 		}
 
 		// Build condition matchers
-		var conditionMatchers []ConditionMatcher
+		var conditionMatchers []api.ConditionMatcher
 		for _, c := range conditions {
-			conditionMatchers = append(conditionMatchers, ConditionMatcher{
+			conditionMatchers = append(conditionMatchers, api.ConditionMatcher{
 				Type:   c.Type.ValueString(),
 				Status: c.Status.ValueString(),
 			})
 		}
 
 		// Create waiter
-		waiter := NewResourceWaiterFromConfig(
+		waiter := api.NewResourceWaiterFromConfig(
 			rs,
 			name,
 			objectType,
@@ -1144,7 +1145,7 @@ func (r *manifestResource) applyManifest(
 func (r *manifestResource) waitWithErrorCheck(
 	ctx context.Context,
 	rs dynamic.ResourceInterface,
-	waiter Waiter,
+	waiter api.Waiter,
 	name string,
 	errorOnConditions []waitErrorOnModel,
 ) error {
@@ -1156,7 +1157,7 @@ func (r *manifestResource) waitWithErrorCheck(
 	}()
 
 	// Check error_on conditions periodically while waiter runs
-	ticker := time.NewTicker(waiterSleepTime)
+	ticker := time.NewTicker(api.WaiterSleepTime)
 	defer ticker.Stop()
 
 	for {
@@ -1453,5 +1454,5 @@ func (r *manifestResource) deleteManifest(
 }
 
 func isNotFoundError(err error) bool {
-	return util.IsNotFoundError(err)
+	return api.IsNotFoundError(err)
 }
