@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-// ValueToType transforms a value along a new type and returns a new value conforming to the given type
+// ValueToType transforms a value along a new type and returns a new value conforming to the given type.
 func ValueToType(
 	v tftypes.Value,
 	t tftypes.Type,
@@ -248,7 +248,7 @@ func morphListToType(
 	}
 	switch {
 	case t.Is(tftypes.List{}):
-		var nlvals []tftypes.Value = make([]tftypes.Value, len(lvals))
+		nlvals := make([]tftypes.Value, len(lvals))
 		for i, v := range lvals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.List).ElementType, elp)
@@ -286,7 +286,7 @@ func morphListToType(
 			})
 			return tftypes.Value{}, diags
 		}
-		var tvals []tftypes.Value = make([]tftypes.Value, len(lvals))
+		tvals := make([]tftypes.Value, len(lvals))
 		for i, v := range lvals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.Tuple).ElementTypes[i], elp)
@@ -312,7 +312,7 @@ func morphListToType(
 		}
 		return newValue(t, tvals, p)
 	case t.Is(tftypes.Set{}):
-		var svals []tftypes.Value = make([]tftypes.Value, len(lvals))
+		svals := make([]tftypes.Value, len(lvals))
 		for i, v := range lvals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.Set).ElementType, elp)
@@ -373,8 +373,8 @@ func morphTupleIntoType(
 	}
 	switch {
 	case t.Is(tftypes.Tuple{}):
-		var eltypes []tftypes.Type = make([]tftypes.Type, len(tvals))
-		var lvals []tftypes.Value = make([]tftypes.Value, len(tvals))
+		eltypes := make([]tftypes.Type, len(tvals))
+		lvals := make([]tftypes.Value, len(tvals))
 		if len(tvals) != len(t.(tftypes.Tuple).ElementTypes) {
 			if len(t.(tftypes.Tuple).ElementTypes) > 1 {
 				diags = append(diags, &tfprotov6.Diagnostic{
@@ -419,7 +419,7 @@ func morphTupleIntoType(
 		}
 		return newValue(tftypes.Tuple{ElementTypes: eltypes}, lvals, p)
 	case t.Is(tftypes.List{}):
-		var lvals []tftypes.Value = make([]tftypes.Value, len(tvals))
+		lvals := make([]tftypes.Value, len(tvals))
 		for i, v := range tvals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.List).ElementType, elp)
@@ -444,7 +444,7 @@ func morphTupleIntoType(
 		}
 		return newValue(t, lvals, p)
 	case t.Is(tftypes.Set{}):
-		var svals []tftypes.Value = make([]tftypes.Value, len(tvals))
+		svals := make([]tftypes.Value, len(tvals))
 		for i, v := range tvals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.Set).ElementType, elp)
@@ -504,7 +504,7 @@ func morphSetToType(
 	}
 	switch {
 	case t.Is(tftypes.Set{}):
-		var svals []tftypes.Value = make([]tftypes.Value, len(svals))
+		svals := make([]tftypes.Value, len(svals))
 		for i, v := range svals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.Set).ElementType, elp)
@@ -529,7 +529,7 @@ func morphSetToType(
 		}
 		return newValue(t, svals, p)
 	case t.Is(tftypes.List{}):
-		var lvals []tftypes.Value = make([]tftypes.Value, len(svals))
+		lvals := make([]tftypes.Value, len(svals))
 		for i, v := range svals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.List).ElementType, elp)
@@ -563,7 +563,7 @@ func morphSetToType(
 			})
 			return tftypes.Value{}, diags
 		}
-		var tvals []tftypes.Value = make([]tftypes.Value, len(svals))
+		tvals := make([]tftypes.Value, len(svals))
 		for i, v := range svals {
 			elp := p.WithElementKeyInt(i)
 			nv, d := ValueToType(v, t.(tftypes.Tuple).ElementTypes[i], elp)
@@ -623,7 +623,7 @@ func morphMapToType(
 	}
 	switch {
 	case t.Is(tftypes.Object{}):
-		var ovals map[string]tftypes.Value = make(map[string]tftypes.Value, len(mvals))
+		ovals := make(map[string]tftypes.Value, len(mvals))
 		for k, v := range mvals {
 			elp := p.WithElementKeyString(k)
 			et, ok := t.(tftypes.Object).AttributeTypes[k]
@@ -661,7 +661,7 @@ func morphMapToType(
 		}
 		return newValue(t, ovals, p)
 	case t.Is(tftypes.Map{}):
-		var nmvals map[string]tftypes.Value = make(map[string]tftypes.Value, len(mvals))
+		nmvals := make(map[string]tftypes.Value, len(mvals))
 		for k, v := range mvals {
 			elp := p.WithElementKeyString(k)
 			nv, d := ValueToType(v, t.(tftypes.Map).ElementType, elp)
@@ -721,7 +721,7 @@ func morphObjectToType(
 	}
 	switch {
 	case t.Is(tftypes.Object{}):
-		var ovals map[string]tftypes.Value = make(map[string]tftypes.Value, len(vals))
+		ovals := make(map[string]tftypes.Value, len(vals))
 		for k, v := range vals {
 			elp := p.WithAttributeName(k)
 			nt, ok := t.(tftypes.Object).AttributeTypes[k]
@@ -775,7 +775,7 @@ func morphObjectToType(
 		}
 		return tftypes.NewValue(tftypes.Object{AttributeTypes: otypes}, ovals), diags
 	case t.Is(tftypes.Map{}):
-		var mvals map[string]tftypes.Value = make(map[string]tftypes.Value, len(vals))
+		mvals := make(map[string]tftypes.Value, len(vals))
 		for k, v := range vals {
 			elp := p.WithElementKeyString(k)
 			nv, d := ValueToType(v, t.(tftypes.Map).ElementType, elp)
@@ -869,7 +869,7 @@ func validateValue(t tftypes.Type, val any, p *tftypes.AttributePath) []*tfproto
 			Attribute: p,
 			Severity:  tfprotov6.DiagnosticSeverityError,
 			Summary:   "Provider encountered an error when trying to determine the Terraform type information for the configured manifest",
-			Detail:    err.(error).Error(),
+			Detail:    err.Error(),
 		})
 		return diags
 	}

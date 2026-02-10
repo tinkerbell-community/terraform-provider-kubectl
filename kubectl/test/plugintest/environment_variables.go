@@ -3,7 +3,7 @@
 
 package plugintest
 
-// Environment variables
+// Environment variables.
 const (
 	// Environment variable with acceptance testing temporary directory for
 	// testing files and Terraform CLI installation, if installation is

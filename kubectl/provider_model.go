@@ -27,7 +27,7 @@ type providerModel struct {
 }
 
 // execModel describes the exec configuration nested block.
-type execModel struct {
+type execModel struct { // nolint:unused
 	APIVersion types.String `tfsdk:"api_version"`
 	Command    types.String `tfsdk:"command"`
 	Env        types.Map    `tfsdk:"env"`

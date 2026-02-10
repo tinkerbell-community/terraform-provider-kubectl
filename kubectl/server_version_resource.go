@@ -233,7 +233,7 @@ func (r *serverVersionResource) Delete(
 
 // readServerVersion is a helper that reads server version and updates the model.
 func (r *serverVersionResource) readServerVersion(
-	ctx context.Context,
+	_ context.Context,
 	model *serverVersionResourceModel,
 ) error {
 	// Get discovery client

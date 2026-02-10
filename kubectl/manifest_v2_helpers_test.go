@@ -94,12 +94,12 @@ func TestBuildUnstructured(t *testing.T) {
 			},
 		},
 		{
-			name:       "null metadata should error",
-			apiVersion: "v1",
-			kind:       "ConfigMap",
-			metadata:   types.DynamicNull(),
-			spec:       types.DynamicNull(),
-			wantErr:    true,
+			name:        "null metadata should error",
+			apiVersion:  "v1",
+			kind:        "ConfigMap",
+			metadata:    types.DynamicNull(),
+			spec:        types.DynamicNull(),
+			wantErr:     true,
 			checkResult: nil,
 		},
 	}
@@ -151,7 +151,10 @@ func TestSetStateFromUnstructured(t *testing.T) {
 					t.Errorf("Expected Kind=ConfigMap, got %s", model.Kind.ValueString())
 				}
 				if model.ID.ValueString() != "v1//ConfigMap//test-config//default" {
-					t.Errorf("Expected ID=v1//ConfigMap//test-config//default, got %s", model.ID.ValueString())
+					t.Errorf(
+						"Expected ID=v1//ConfigMap//test-config//default, got %s",
+						model.ID.ValueString(),
+					)
 				}
 				if model.Metadata.IsNull() {
 					t.Error("Expected Metadata to be populated")
@@ -375,7 +378,7 @@ func TestRoundTripUnstructured(t *testing.T) {
 	}
 }
 
-// Helper function for tests
+// Helper function for tests.
 func mustNewBigFloat(f float64) *big.Float {
 	bf := big.NewFloat(f)
 	return bf

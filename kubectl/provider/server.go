@@ -53,7 +53,7 @@ func dump(v any) hclog.Format {
 	return hclog.Fmt("%v", v)
 }
 
-// ValidateProviderConfig function
+// ValidateProviderConfig function.
 func (s *RawProviderServer) ValidateProviderConfig(
 	ctx context.Context,
 	req *tfprotov6.ValidateProviderConfigRequest,
@@ -63,7 +63,7 @@ func (s *RawProviderServer) ValidateProviderConfig(
 	return resp, nil
 }
 
-// GetMetadata function
+// GetMetadata function.
 func (s *RawProviderServer) GetMetadata(
 	ctx context.Context,
 	req *tfprotov6.GetMetadataRequest,
@@ -89,7 +89,7 @@ func (s *RawProviderServer) GetMetadata(
 	return resp, nil
 }
 
-// ValidateDataResourceConfig function
+// ValidateDataResourceConfig function.
 func (s *RawProviderServer) ValidateDataResourceConfig(
 	ctx context.Context,
 	req *tfprotov6.ValidateDataResourceConfigRequest,
@@ -99,7 +99,7 @@ func (s *RawProviderServer) ValidateDataResourceConfig(
 	return resp, nil
 }
 
-// StopProvider function
+// StopProvider function.
 func (s *RawProviderServer) StopProvider(
 	ctx context.Context,
 	req *tfprotov6.StopProviderRequest,
@@ -109,7 +109,7 @@ func (s *RawProviderServer) StopProvider(
 	return nil, status.Errorf(codes.Unimplemented, "method Stop not implemented")
 }
 
-// CallFunction function
+// CallFunction function.
 func (s *RawProviderServer) CallFunction(
 	ctx context.Context,
 	req *tfprotov6.CallFunctionRequest,
@@ -119,7 +119,7 @@ func (s *RawProviderServer) CallFunction(
 	return resp, nil
 }
 
-// GetFunctions function
+// GetFunctions function.
 func (s *RawProviderServer) GetFunctions(
 	ctx context.Context,
 	req *tfprotov6.GetFunctionsRequest,
@@ -129,7 +129,7 @@ func (s *RawProviderServer) GetFunctions(
 	return resp, nil
 }
 
-// MoveResourceState function
+// MoveResourceState function.
 func (s *RawProviderServer) MoveResourceState(
 	ctx context.Context,
 	req *tfprotov6.MoveResourceStateRequest,

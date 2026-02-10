@@ -51,7 +51,7 @@ func (f *foapiv3) GetTypeByGVK(_ schema.GroupVersionKind) (tftypes.Type, map[str
 	f.gate.Lock()
 	defer f.gate.Unlock()
 
-	var hints map[string]string = make(map[string]string)
+	hints := make(map[string]string)
 	ap := tftypes.AttributePath{}
 
 	sref := f.doc.Components.Schemas[""]

@@ -33,7 +33,7 @@ func AutoInitProviderHelper(ctx context.Context, sourceDir string) *Helper {
 }
 
 // Helper is intended as a per-package singleton created in TestMain which
-// other tests in a package can use to create Terraform execution contexts
+// other tests in a package can use to create Terraform execution contexts.
 type Helper struct {
 	baseDir string
 
@@ -257,7 +257,7 @@ func (h *Helper) NewWorkingDir(ctx context.Context, t TestControl) (*WorkingDir,
 	// environment variable should take precedence over TF_ACC_LOG_PATH.
 	if tfLogPathMask != "" {
 		// Escape special characters which may appear if we have subtests
-		testName := strings.Replace(t.Name(), "/", "__", -1)
+		testName := strings.ReplaceAll(t.Name(), "/", "__")
 		logPath = fmt.Sprintf(tfLogPathMask, testName)
 		logPathEnvVar = EnvTfLogPathMask
 	}

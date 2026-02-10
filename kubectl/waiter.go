@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package provider
+package kubectl
 
 import (
 	"context"
@@ -24,30 +24,12 @@ import (
 
 const waiterSleepTime = 1 * time.Second
 
-func (s *RawProviderServer) waitForCompletion(
-	ctx context.Context,
-	waitForBlock tftypes.Value,
-	rs dynamic.ResourceInterface,
-	rname string,
-	rtype tftypes.Type,
-	th map[string]string,
-) error {
-	if waitForBlock.IsNull() || !waitForBlock.IsKnown() {
-		return nil
-	}
-
-	waiter, err := NewResourceWaiter(rs, rname, rtype, th, waitForBlock, s.logger)
-	if err != nil {
-		return err
-	}
-	return waiter.Wait(ctx)
-}
-
 // Waiter is a simple interface to implement a blocking wait operation.
 type Waiter interface {
 	Wait(context.Context) error
 }
 
+// WaiterError represents a timeout error while waiting for a condition.
 type WaiterError struct {
 	Reason string
 }
@@ -56,96 +38,59 @@ func (e WaiterError) Error() string {
 	return fmt.Sprintf("timed out waiting on %v", e.Reason)
 }
 
-// NewResourceWaiter constructs an appropriate Waiter using the supplied waitForBlock configuration.
-func NewResourceWaiter(
+// NewResourceWaiterFromConfig constructs an appropriate Waiter from framework wait model values.
+// This adapts the raw provider's NewResourceWaiter for use with the framework resource.
+func NewResourceWaiterFromConfig(
 	resource dynamic.ResourceInterface,
 	resourceName string,
 	resourceType tftypes.Type,
-	th map[string]string,
-	waitForBlock tftypes.Value,
-	hl hclog.Logger,
-) (Waiter, error) {
-	var waitForBlockVal map[string]tftypes.Value
-	err := waitForBlock.As(&waitForBlockVal)
-	if err != nil {
-		return nil, err
-	}
-
-	if v, ok := waitForBlockVal["rollout"]; ok {
-		var rollout bool
-		v.As(&rollout)
-		if rollout {
-			return &RolloutWaiter{
-				resource,
-				resourceName,
-				hl,
-			}, nil
+	typeHints map[string]string,
+	rollout bool,
+	fieldMatchers []FieldMatcher,
+	conditions []ConditionMatcher,
+	logger hclog.Logger,
+) Waiter {
+	if rollout {
+		return &RolloutWaiter{
+			resource:     resource,
+			resourceName: resourceName,
+			logger:       logger,
 		}
 	}
 
-	if v, ok := waitForBlockVal["condition"]; ok {
-		var conditionsBlocks []tftypes.Value
-		v.As(&conditionsBlocks)
-		if len(conditionsBlocks) > 0 {
-			return &ConditionsWaiter{
-				resource,
-				resourceName,
-				conditionsBlocks,
-				hl,
-			}, nil
+	if len(conditions) > 0 {
+		return &ConditionsWaiterV2{
+			resource:     resource,
+			resourceName: resourceName,
+			conditions:   conditions,
+			logger:       logger,
 		}
 	}
 
-	fields, ok := waitForBlockVal["fields"]
-	if !ok || fields.IsNull() || !fields.IsKnown() {
-		return &NoopWaiter{}, nil
-	}
-
-	if !fields.Type().Is(tftypes.Map{}) {
-		return nil, fmt.Errorf(`"fields" should be a map of strings`)
-	}
-
-	var vm map[string]tftypes.Value
-	fields.As(&vm)
-	var matchers []FieldMatcher
-
-	for k, v := range vm {
-		var expr string
-		v.As(&expr)
-		var re *regexp.Regexp
-		if expr == "*" {
-			// NOTE this is just a shorthand so the user doesn't have to
-			// type the expression below all the time
-			re = regexp.MustCompile("(.*)?")
-		} else {
-			var err error
-			re, err = regexp.Compile(expr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid regular expression: %q", expr)
-			}
+	if len(fieldMatchers) > 0 {
+		return &FieldWaiter{
+			resource:      resource,
+			resourceName:  resourceName,
+			resourceType:  resourceType,
+			typeHints:     typeHints,
+			fieldMatchers: fieldMatchers,
+			logger:        logger,
 		}
-
-		p, err := FieldPathToTftypesPath(k)
-		if err != nil {
-			return nil, err
-		}
-		matchers = append(matchers, FieldMatcher{p, re})
 	}
 
-	return &FieldWaiter{
-		resource,
-		resourceName,
-		resourceType,
-		th,
-		matchers,
-		hl,
-	}, nil
+	return &NoopWaiter{}
 }
 
 // FieldMatcher contains a tftypes.AttributePath to a field and a regexp to match on it.
 type FieldMatcher struct {
-	path         *tftypes.AttributePath
-	valueMatcher *regexp.Regexp
+	Path         *tftypes.AttributePath
+	ValueMatcher *regexp.Regexp
+}
+
+// ConditionMatcher describes a condition type/status pair to wait for.
+type ConditionMatcher struct {
+	Type   string
+	Status string
 }
 
 // FieldWaiter will wait for a set of fields to be set,
@@ -161,7 +106,7 @@ type FieldWaiter struct {
 
 // Wait blocks until all of the FieldMatchers configured evaluate to true.
 func (w *FieldWaiter) Wait(ctx context.Context) error {
-	w.logger.Info("[ApplyResourceChange][Wait] Waiting until ready...\n")
+	w.logger.Info("[Wait] Waiting until fields match...\n")
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
 			if time.Now().After(deadline) {
@@ -169,9 +114,6 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 			}
 		}
 
-		// NOTE The typed API resource is actually returned in the
-		// event object but I haven't yet figured out how to convert it
-		// to a cty.Value.
 		res, err := w.resource.Get(ctx, w.resourceName, v1.GetOptions{})
 		if err != nil {
 			return err
@@ -180,10 +122,11 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 			return fmt.Errorf("resource was deleted")
 		}
 		resObj := res.Object
-		meta := resObj["metadata"].(map[string]any)
-		delete(meta, "managedFields")
+		if meta, ok := resObj["metadata"].(map[string]any); ok {
+			delete(meta, "managedFields")
+		}
 
-		w.logger.Trace("[ApplyResourceChange][Wait]", "API Response", resObj)
+		w.logger.Trace("[Wait]", "API Response", resObj)
 
 		obj, err := payload.ToTFValue(
 			resObj,
@@ -197,12 +140,12 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 
 		done, err := func(obj tftypes.Value) (bool, error) {
 			for _, m := range w.fieldMatchers {
-				vi, rp, err := tftypes.WalkAttributePath(obj, m.path)
+				vi, rp, err := tftypes.WalkAttributePath(obj, m.Path)
 				if err != nil {
 					return false, err
 				}
 				if len(rp.Steps()) > 0 {
-					return false, fmt.Errorf("attribute not present at path '%s'", m.path.String())
+					return false, fmt.Errorf("attribute not present at path '%s'", m.Path.String())
 				}
 
 				var s string
@@ -228,7 +171,7 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 					return true, fmt.Errorf("wait_for: cannot match on type %q", v.Type().String())
 				}
 
-				if !m.valueMatcher.Match([]byte(s)) {
+				if !m.ValueMatcher.Match([]byte(s)) {
 					return false, nil
 				}
 			}
@@ -237,12 +180,11 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 		}(obj)
 
 		if done {
-			w.logger.Info("[ApplyResourceChange][Wait] Done waiting.\n")
+			w.logger.Info("[Wait] Done waiting.\n")
 			return err
 		}
 
-		// TODO: implement with exponential back-off.
-		time.Sleep(waiterSleepTime) // lintignore:R018
+		time.Sleep(waiterSleepTime)
 	}
 }
 
@@ -313,7 +255,7 @@ type RolloutWaiter struct {
 
 // Wait uses StatusViewer to determine if the rollout is done.
 func (w *RolloutWaiter) Wait(ctx context.Context) error {
-	w.logger.Info("[ApplyResourceChange][Wait] Waiting until rollout complete...\n")
+	w.logger.Info("[Wait] Waiting until rollout complete...\n")
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
 			if time.Now().After(deadline) {
@@ -344,25 +286,25 @@ func (w *RolloutWaiter) Wait(ctx context.Context) error {
 			break
 		}
 
-		time.Sleep(waiterSleepTime) // lintignore:R018
+		time.Sleep(waiterSleepTime)
 	}
 
-	w.logger.Info("[ApplyResourceChange][Wait] Rollout complete\n")
+	w.logger.Info("[Wait] Rollout complete\n")
 	return nil
 }
 
-// ConditionsWaiter will wait for the specified conditions on
-// the resource to be met.
-type ConditionsWaiter struct {
+// ConditionsWaiterV2 will wait for the specified conditions on
+// the resource to be met, using ConditionMatcher values.
+type ConditionsWaiterV2 struct {
 	resource     dynamic.ResourceInterface
 	resourceName string
-	conditions   []tftypes.Value
+	conditions   []ConditionMatcher
 	logger       hclog.Logger
 }
 
 // Wait checks all the configured conditions have been met.
-func (w *ConditionsWaiter) Wait(ctx context.Context) error {
-	w.logger.Info("[ApplyResourceChange][Wait] Waiting for conditions...\n")
+func (w *ConditionsWaiterV2) Wait(ctx context.Context) error {
+	w.logger.Info("[Wait] Waiting for conditions...\n")
 
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
@@ -383,16 +325,14 @@ func (w *ConditionsWaiter) Wait(ctx context.Context) error {
 			if conditions, ok := status["conditions"].([]any); ok && len(conditions) > 0 {
 				conditionsMet := true
 				for _, c := range w.conditions {
-					var condition map[string]tftypes.Value
-					c.As(&condition)
-					var conditionType, conditionStatus string
-					condition["type"].As(&conditionType)
-					condition["status"].As(&conditionStatus)
 					conditionMet := false
 					for _, cc := range conditions {
-						ccc := cc.(map[string]any)
-						if ccc["type"].(string) == conditionType {
-							conditionMet = ccc["status"].(string) == conditionStatus
+						ccc, ok := cc.(map[string]any)
+						if !ok {
+							continue
+						}
+						if ccc["type"].(string) == c.Type {
+							conditionMet = ccc["status"].(string) == c.Status
 							break
 						}
 					}
@@ -403,9 +343,9 @@ func (w *ConditionsWaiter) Wait(ctx context.Context) error {
 				}
 			}
 		}
-		time.Sleep(waiterSleepTime) // lintignore:R018
+		time.Sleep(waiterSleepTime)
 	}
 
-	w.logger.Info("[ApplyResourceChange][Wait] All conditions met.\n")
+	w.logger.Info("[Wait] All conditions met.\n")
 	return nil
 }

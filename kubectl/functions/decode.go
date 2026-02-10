@@ -105,7 +105,12 @@ func decodeScalar(ctx context.Context, m any) (value attr.Value, diags diag.Diag
 	case map[string]any:
 		return decodeMapping(ctx, v)
 	default:
-		diags.Append(diag.NewErrorDiagnostic("failed to decode", fmt.Sprintf("unexpected type: %T for value %#v", v, v)))
+		diags.Append(
+			diag.NewErrorDiagnostic(
+				"failed to decode",
+				fmt.Sprintf("unexpected type: %T for value %#v", v, v),
+			),
+		)
 	}
 	return
 }

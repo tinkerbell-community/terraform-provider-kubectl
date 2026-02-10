@@ -26,7 +26,7 @@ var (
 	defaultDeleteTimeout = "10m"
 )
 
-// ApplyResourceChange function
+// ApplyResourceChange function.
 func (s *RawProviderServer) ApplyResourceChange(
 	ctx context.Context,
 	req *tfprotov6.ApplyResourceChangeRequest,
@@ -91,7 +91,7 @@ func (s *RawProviderServer) ApplyResourceChange(
 		return resp, nil
 	}
 
-	var plannedStateVal map[string]tftypes.Value = make(map[string]tftypes.Value)
+	plannedStateVal := make(map[string]tftypes.Value)
 	err = applyPlannedState.As(&plannedStateVal)
 	if err != nil {
 		resp.Diagnostics = append(resp.Diagnostics, &tfprotov6.Diagnostic{
@@ -134,7 +134,9 @@ func (s *RawProviderServer) ApplyResourceChange(
 		}
 	} else {
 		// When not specified by the user, 'metadata.annotations' and 'metadata.labels' are configured as default
-		atp = tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("annotations")
+		atp = tftypes.NewAttributePath().
+			WithAttributeName("metadata").
+			WithAttributeName("annotations")
 		computedFields[atp.String()] = atp
 
 		atp = tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("labels")
@@ -261,7 +263,7 @@ func (s *RawProviderServer) ApplyResourceChange(
 					if err != nil {
 						return v, err
 					}
-					var isEmpty bool = true
+					isEmpty := true
 					for _, atv := range atts {
 						if !atv.IsNull() {
 							isEmpty = false
@@ -423,7 +425,9 @@ func (s *RawProviderServer) ApplyResourceChange(
 					},
 				)
 			} else if status := apierrors.APIStatus(nil); errors.As(err, &status) {
-				resp.Diagnostics = append(resp.Diagnostics, APIStatusErrorToDiagnostics(status.Status())...)
+				resp.Diagnostics = append(
+					resp.Diagnostics,
+					APIStatusErrorToDiagnostics(status.Status())...)
 			} else {
 				resp.Diagnostics = append(resp.Diagnostics,
 					&tfprotov6.Diagnostic{

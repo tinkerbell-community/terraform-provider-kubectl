@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-// GetProviderConfigSchema contains the definitions of all configuration attributes
+// GetProviderConfigSchema contains the definitions of all configuration attributes.
 func GetProviderConfigSchema() *tfprotov6.Schema {
 	b := tfprotov6.SchemaBlock{
 		Attributes: []*tfprotov6.SchemaAttribute{

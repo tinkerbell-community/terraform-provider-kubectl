@@ -135,7 +135,7 @@ func isImportedFlagFromPrivate(p []byte) (f bool, d []*tfprotov6.Diagnostic) {
 	return
 }
 
-// PlanResourceChange function
+// PlanResourceChange function.
 func (s *RawProviderServer) PlanResourceChange(
 	ctx context.Context,
 	req *tfprotov6.PlanResourceChangeRequest,
@@ -252,7 +252,9 @@ func (s *RawProviderServer) PlanResourceChange(
 		}
 	} else {
 		// When not specified by the user, 'metadata.annotations' and 'metadata.labels' are configured as default
-		atp = tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("annotations")
+		atp = tftypes.NewAttributePath().
+			WithAttributeName("metadata").
+			WithAttributeName("annotations")
 		computedFields[atp.String()] = atp
 
 		atp = tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("labels")
@@ -489,61 +491,79 @@ func (s *RawProviderServer) PlanResourceChange(
 			})
 			return resp, nil
 		}
-		updatedObj, err := tftypes.Transform(completePropMan, func(ap *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
-			_, isComputed := computedFields[ap.String()]
-			if v.IsKnown() { // this is a value from current configuration - include it in the plan
-				hasChanged := false
-				wasCfg, restPath, err := tftypes.WalkAttributePath(priorMan, ap)
-				if err != nil && len(restPath.Steps()) != 0 {
-					hasChanged = true
-				}
-				nowCfg, restPath, err := tftypes.WalkAttributePath(ppMan, ap)
-				hasChanged = err == nil && len(restPath.Steps()) == 0 && wasCfg.(tftypes.Value).IsKnown() && !wasCfg.(tftypes.Value).Equal(nowCfg.(tftypes.Value))
-				if hasChanged {
-					h, ok := hints[morph.ValueToTypePath(ap).String()]
-					if ok && h == kubectl.PreserveUnknownFieldsLabel {
-						resp.Diagnostics = append(resp.Diagnostics, &tfprotov6.Diagnostic{
-							Severity: tfprotov6.DiagnosticSeverityWarning,
-							Summary:  fmt.Sprintf("The attribute path %v value's type is an x-kubernetes-preserve-unknown-field", morph.ValueToTypePath(ap).String()),
-							Detail:   "Changes to the type may cause some unexpected behavior.",
-						})
+		updatedObj, err := tftypes.Transform(
+			completePropMan,
+			func(ap *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+				_, isComputed := computedFields[ap.String()]
+				if v.IsKnown() { // this is a value from current configuration - include it in the plan
+					hasChanged := false
+					wasCfg, restPath, err := tftypes.WalkAttributePath(priorMan, ap)
+					if err != nil && len(restPath.Steps()) != 0 {
+						hasChanged = true
 					}
-				}
-				if isComputed {
-					if hasChanged {
-						return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
+					if nowCfg, restPath, err := tftypes.WalkAttributePath(ppMan, ap); err == nil {
+						hasChanged = len(restPath.Steps()) == 0 &&
+							wasCfg.(tftypes.Value).IsKnown() &&
+							!wasCfg.(tftypes.Value).Equal(nowCfg.(tftypes.Value))
+						if hasChanged {
+							h, ok := hints[morph.ValueToTypePath(ap).String()]
+							if ok && h == kubectl.PreserveUnknownFieldsLabel {
+								resp.Diagnostics = append(resp.Diagnostics, &tfprotov6.Diagnostic{
+									Severity: tfprotov6.DiagnosticSeverityWarning,
+									Summary: fmt.Sprintf(
+										"The attribute path %v value's type is an x-kubernetes-preserve-unknown-field",
+										morph.ValueToTypePath(ap).String(),
+									),
+									Detail: "Changes to the type may cause some unexpected behavior.",
+								})
+							}
+						}
 					}
-					nowVal, restPath, err := tftypes.WalkAttributePath(proposedVal["object"], ap)
-					if err == nil && len(restPath.Steps()) == 0 {
-						return nowVal.(tftypes.Value), nil
+					if isComputed {
+						if hasChanged {
+							return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
+						}
+						nowVal, restPath, err := tftypes.WalkAttributePath(
+							proposedVal["object"],
+							ap,
+						)
+						if err == nil && len(restPath.Steps()) == 0 {
+							return nowVal.(tftypes.Value), nil
+						}
 					}
-				}
-				return v, nil
-			}
-			// check if value was present in the previous configuration
-			wasVal, restPath, err := tftypes.WalkAttributePath(priorMan, ap)
-			if err == nil && len(restPath.Steps()) == 0 && wasVal.(tftypes.Value).IsKnown() {
-				// attribute was previously set in config and has now been removed
-				// return the new unknown value to give the API a chance to set a default
-				return v, nil
-			}
-			// at this point, check if there is a default value in the previous state
-			priorAtrVal, restPath, err := tftypes.WalkAttributePath(priorObj, ap)
-			if err != nil {
-				if len(restPath.Steps()) > 0 {
-					// attribute wasn't present, but part of its parent path is.
-					// just stay on course and use the proposed value.
 					return v, nil
 				}
-				// the entire attribute path is was not found - this should not happen
-				// unless the path is totally foreign to the resource type. Return error.
-				return v, ap.NewError(err)
-			}
-			if len(restPath.Steps()) > 0 {
-				s.logger.Warn("[PlanResourceChange]", "Unexpected missing attribute from state at", ap.String(), " + ", restPath.String())
-			}
-			return priorAtrVal.(tftypes.Value), nil
-		})
+				// check if value was present in the previous configuration
+				wasVal, restPath, err := tftypes.WalkAttributePath(priorMan, ap)
+				if err == nil && len(restPath.Steps()) == 0 && wasVal.(tftypes.Value).IsKnown() {
+					// attribute was previously set in config and has now been removed
+					// return the new unknown value to give the API a chance to set a default
+					return v, nil
+				}
+				// at this point, check if there is a default value in the previous state
+				priorAtrVal, restPath, err := tftypes.WalkAttributePath(priorObj, ap)
+				if err != nil {
+					if len(restPath.Steps()) > 0 {
+						// attribute wasn't present, but part of its parent path is.
+						// just stay on course and use the proposed value.
+						return v, nil
+					}
+					// the entire attribute path is was not found - this should not happen
+					// unless the path is totally foreign to the resource type. Return error.
+					return v, ap.NewError(err)
+				}
+				if len(restPath.Steps()) > 0 {
+					s.logger.Warn(
+						"[PlanResourceChange]",
+						"Unexpected missing attribute from state at",
+						ap.String(),
+						" + ",
+						restPath.String(),
+					)
+				}
+				return priorAtrVal.(tftypes.Value), nil
+			},
+		)
 		if err != nil {
 			resp.Diagnostics = append(resp.Diagnostics, &tfprotov6.Diagnostic{
 				Severity:  tfprotov6.DiagnosticSeverityError,

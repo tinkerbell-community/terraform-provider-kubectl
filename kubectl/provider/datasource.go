@@ -234,7 +234,7 @@ func (s *RawProviderServer) ReadPluralDataSource(
 	return resp, nil
 }
 
-// ReadDataSource function
+// ReadDataSource function.
 func (s *RawProviderServer) ReadSingularDataSource(
 	ctx context.Context,
 	req *tfprotov6.ReadDataSourceRequest,

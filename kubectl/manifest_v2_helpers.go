@@ -67,7 +67,7 @@ func buildUnstructured(
 func setStateFromUnstructured(
 	ctx context.Context,
 	uo *meta_v1_unstruct.Unstructured,
-	model *manifestResourceModelV2,
+	model *manifestResourceModel,
 ) diag.Diagnostics {
 	var diags diag.Diagnostics
 
@@ -150,8 +150,12 @@ func setStateFromUnstructured(
 	return diags
 }
 
-// extractMetadataField safely extracts a field from the metadata Dynamic attribute
-func extractMetadataField(ctx context.Context, metadata types.Dynamic, fieldName string) (string, error) {
+// extractMetadataField safely extracts a field from the metadata Dynamic attribute.
+func extractMetadataField(
+	ctx context.Context,
+	metadata types.Dynamic,
+	fieldName string,
+) (string, error) {
 	if metadata.IsNull() || metadata.IsUnknown() {
 		return "", fmt.Errorf("metadata is null or unknown")
 	}
@@ -171,19 +175,5 @@ func extractMetadataField(ctx context.Context, metadata types.Dynamic, fieldName
 	return "", nil // Field not present (may be optional)
 }
 
-// manifestResourceModelV2 describes the NEW resource data model with Dynamic attributes.
-// This will eventually replace manifestResourceModel.
-type manifestResourceModelV2 struct {
-	ID             types.String `tfsdk:"id"`
-	APIVersion     types.String `tfsdk:"api_version"`
-	Kind           types.String `tfsdk:"kind"`
-	Metadata       types.Dynamic `tfsdk:"metadata"`
-	Spec           types.Dynamic `tfsdk:"spec"`
-	Status         types.Dynamic `tfsdk:"status"`
-	Object         types.Dynamic `tfsdk:"object"`
-	ComputedFields types.List   `tfsdk:"computed_fields"`
-	ApplyOnly      types.Bool   `tfsdk:"apply_only"`
-	DeleteCascade  types.String `tfsdk:"delete_cascade"`
-	// Wait and FieldManager will be blocks
-	// Timeouts will use the existing pattern
-}
+// manifestResourceModelV2 is now unified as manifestResourceModel - kept as alias for backward compatibility.
+type manifestResourceModelV2 = manifestResourceModel

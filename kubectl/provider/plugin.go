@@ -27,10 +27,10 @@ func Serve(ctx context.Context, logger hclog.Logger) error {
 	)
 }
 
-// Provider
+// Provider.
 func Provider() func() tfprotov6.ProviderServer {
 	var logLevel string
-	var ok bool = false
+	ok := false
 	for _, ev := range []string{"TF_LOG_PROVIDER_KUBERNETES", "TF_LOG_PROVIDER", "TF_LOG"} {
 		logLevel, ok = os.LookupEnv(ev)
 		if ok {
@@ -75,7 +75,7 @@ func ServeTest(
 	}, nil
 }
 
-// convertReattachConfig converts plugin.ReattachConfig to tfexec.ReattachConfig
+// convertReattachConfig converts plugin.ReattachConfig to tfexec.ReattachConfig.
 func convertReattachConfig(reattachConfig *plugin.ReattachConfig) tfexec.ReattachConfig {
 	return tfexec.ReattachConfig{
 		Protocol:        string(reattachConfig.Protocol),
@@ -89,7 +89,7 @@ func convertReattachConfig(reattachConfig *plugin.ReattachConfig) tfexec.Reattac
 	}
 }
 
-// waitForReattachConfig blocks until a ReattachConfig is recieved on the
+// waitForReattachConfig blocks until a ReattachConfig is received on the
 // supplied channel or times out after 2 seconds.
 func waitForReattachConfig(ch chan *plugin.ReattachConfig) (*plugin.ReattachConfig, error) {
 	select {

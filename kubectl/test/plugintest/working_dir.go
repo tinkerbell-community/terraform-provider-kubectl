@@ -320,7 +320,7 @@ func (wd *WorkingDir) State(ctx context.Context) (*tfjson.State, error) {
 	return state, err
 }
 
-// Import runs terraform import
+// Import runs terraform import.
 func (wd *WorkingDir) Import(ctx context.Context, resource, id string) error {
 	logging.HelperResourceTrace(ctx, "Calling Terraform CLI import command")
 
@@ -337,7 +337,7 @@ func (wd *WorkingDir) Import(ctx context.Context, resource, id string) error {
 	return err
 }
 
-// Refresh runs terraform refresh
+// Refresh runs terraform refresh.
 func (wd *WorkingDir) Refresh(ctx context.Context) error {
 	logging.HelperResourceTrace(ctx, "Calling Terraform CLI refresh command")
 

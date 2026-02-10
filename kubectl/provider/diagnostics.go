@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// APIStatusErrorToDiagnostics converts an Kubernetes API machinery StatusError into Terraform Diagnostics
+// APIStatusErrorToDiagnostics converts an Kubernetes API machinery StatusError into Terraform Diagnostics.
 func APIStatusErrorToDiagnostics(s metav1.Status) []*tfprotov6.Diagnostic {
 	var diags []*tfprotov6.Diagnostic
 	diags = append(diags, &tfprotov6.Diagnostic{

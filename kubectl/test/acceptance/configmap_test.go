@@ -104,6 +104,9 @@ func TestKubernetesManifest_ConfigMap(t *testing.T) {
 		tfstate.AssertIdentityValueEqual(t, "kubernetes_manifest.test", "name", name)
 		tfstate.AssertIdentityValueEqual(t, "kubernetes_manifest.test", "namespace", namespace)
 	} else {
-		t.Logf("Skipping identity assertions because terraform version %s is less than 1.12.0", tfversion)
+		t.Logf(
+			"Skipping identity assertions because terraform version %s is less than 1.12.0",
+			tfversion,
+		)
 	}
 }

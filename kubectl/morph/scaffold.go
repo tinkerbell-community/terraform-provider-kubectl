@@ -117,7 +117,7 @@ func DeepUnknown(t tftypes.Type, v tftypes.Value, p *tftypes.AttributePath) (tft
 	}
 }
 
-// UnknownToNull replaces all unknown values in a deep structure with null
+// UnknownToNull replaces all unknown values in a deep structure with null.
 func UnknownToNull(v tftypes.Value) tftypes.Value {
 	if !v.IsKnown() {
 		return tftypes.NewValue(v.Type(), nil)

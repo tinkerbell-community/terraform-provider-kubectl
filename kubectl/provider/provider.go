@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-// GetObjectTypeFromSchema returns a tftypes.Type that can wholy represent the schema input
+// GetObjectTypeFromSchema returns a tftypes.Type that can wholly represent the schema input.
 func GetObjectTypeFromSchema(schema *tfprotov6.Schema) tftypes.Type {
 	bm := map[string]tftypes.Type{}
 
@@ -43,7 +43,7 @@ func GetObjectTypeFromSchema(schema *tfprotov6.Schema) tftypes.Type {
 	return tftypes.Object{AttributeTypes: bm}
 }
 
-// GetResourceType returns the tftypes.Type of a resource of type 'name'
+// GetResourceType returns the tftypes.Type of a resource of type 'name'.
 func GetResourceType(name string) (tftypes.Type, error) {
 	sch := GetProviderResourceSchema()
 	rsch, ok := sch[name]
@@ -56,7 +56,7 @@ func GetResourceType(name string) (tftypes.Type, error) {
 	return GetObjectTypeFromSchema(rsch), nil
 }
 
-// GetDataSourceType returns the tftypes.Type of a datasource of type 'name'
+// GetDataSourceType returns the tftypes.Type of a datasource of type 'name'.
 func GetDataSourceType(name string) (tftypes.Type, error) {
 	sch := GetProviderDataSourceSchema()
 	rsch, ok := sch[name]
@@ -69,7 +69,7 @@ func GetDataSourceType(name string) (tftypes.Type, error) {
 	return GetObjectTypeFromSchema(rsch), nil
 }
 
-// GetProviderResourceSchema contains the definitions of all supported resources
+// GetProviderResourceSchema contains the definitions of all supported resources.
 func GetProviderResourceSchema() map[string]*tfprotov6.Schema {
 	return map[string]*tfprotov6.Schema{
 		"kubernetes_manifest": {
@@ -222,7 +222,7 @@ func GetProviderResourceSchema() map[string]*tfprotov6.Schema {
 	}
 }
 
-// GetProviderDataSourceSchema contains the definitions of all supported data sources
+// GetProviderDataSourceSchema contains the definitions of all supported data sources.
 func GetProviderDataSourceSchema() map[string]*tfprotov6.Schema {
 	return map[string]*tfprotov6.Schema{
 		"kubernetes_resource": {

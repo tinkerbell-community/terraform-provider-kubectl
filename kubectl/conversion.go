@@ -6,17 +6,17 @@ package kubectl
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
-	"math/big"
 )
 
 // dynamicToMap converts a types.Dynamic value to map[string]any
-// This is used to convert Dynamic attributes to Kubernetes unstructured objects
-func dynamicToMap(ctx context.Context, d types.Dynamic) (map[string]any, diag.Diagnostics) {
+// This is used to convert Dynamic attributes to Kubernetes unstructured objects.
+func dynamicToMap(_ context.Context, d types.Dynamic) (map[string]any, diag.Diagnostics) {
 	if d.IsNull() || d.IsUnknown() {
 		return nil, nil
 	}
@@ -42,7 +42,7 @@ func dynamicToMap(ctx context.Context, d types.Dynamic) (map[string]any, diag.Di
 }
 
 // mapToDynamic converts map[string]any to types.Dynamic
-// This is used to convert Kubernetes unstructured objects to Dynamic attributes
+// This is used to convert Kubernetes unstructured objects to Dynamic attributes.
 func mapToDynamic(ctx context.Context, m map[string]any) (types.Dynamic, diag.Diagnostics) {
 	if m == nil {
 		return types.DynamicNull(), nil
@@ -57,7 +57,7 @@ func mapToDynamic(ctx context.Context, m map[string]any) (types.Dynamic, diag.Di
 }
 
 // encodeAttrValue converts attr.Value to any
-// Based on kubectl/functions/encode.go:encodeValue
+// Based on kubectl/functions/encode.go:encodeValue.
 func encodeAttrValue(v attr.Value) (any, error) {
 	if v.IsNull() {
 		return nil, nil
@@ -158,7 +158,7 @@ func encodeMap(mv basetypes.MapValue) (map[string]any, error) {
 }
 
 // decodeAny converts any to attr.Value
-// Based on kubectl/functions/decode.go:decodeScalar
+// Based on kubectl/functions/decode.go:decodeScalar.
 func decodeAny(ctx context.Context, m any) (value attr.Value, diags diag.Diagnostics) {
 	switch v := m.(type) {
 	case nil:

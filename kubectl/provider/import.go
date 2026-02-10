@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// ImportResourceState function
+// ImportResourceState function.
 func (s *RawProviderServer) ImportResourceState(
 	ctx context.Context,
 	req *tfprotov6.ImportResourceStateRequest,

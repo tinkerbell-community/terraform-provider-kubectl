@@ -29,7 +29,7 @@ import (
 
 const minTFVersion string = "v0.14.8"
 
-// ConfigureProvider function
+// ConfigureProvider function.
 func (s *RawProviderServer) ConfigureProvider(
 	ctx context.Context,
 	req *tfprotov6.ConfigureProviderRequest,

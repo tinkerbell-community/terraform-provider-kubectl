@@ -10,11 +10,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/mitchellh/hashstructure"
 )
+
+// PreserveUnknownFieldsLabel is the OpenAPI extension key for x-kubernetes-preserve-unknown-fields.
+const PreserveUnknownFieldsLabel string = "x-kubernetes-preserve-unknown-fields"
 
 func resolveSchemaRef(
 	ref *openapi3.SchemaRef,
@@ -143,7 +145,7 @@ func getTypeFromSchema(
 				typeCache.Store(h, t)
 			}
 			return t, nil
-		case elem.AdditionalProperties.Has != nil && elem.Items == nil: // "overriden" array - translates to a tftypes.Tuple
+		case elem.AdditionalProperties.Has != nil && elem.Items == nil: // "overridden" array - translates to a tftypes.Tuple
 			it, err := resolveSchemaRef(elem.AdditionalProperties.Schema, defs)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve schema for items: %s", err)

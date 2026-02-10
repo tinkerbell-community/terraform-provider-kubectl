@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// ReadResource function
+// ReadResource function.
 func (s *RawProviderServer) ReadResource(
 	ctx context.Context,
 	req *tfprotov6.ReadResourceRequest,

@@ -45,7 +45,7 @@ func encodeSet(sv basetypes.SetValue) ([]any, error) {
 	elems := sv.Elements()
 	size := len(elems)
 	l := make([]any, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		var err error
 		l[i], err = encodeValue(elems[i])
 		if err != nil {
@@ -59,7 +59,7 @@ func encodeList(lv basetypes.ListValue) ([]any, error) {
 	elems := lv.Elements()
 	size := len(elems)
 	l := make([]any, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		var err error
 		l[i], err = encodeValue(elems[i])
 		if err != nil {
@@ -73,7 +73,7 @@ func encodeTuple(tv basetypes.TupleValue) ([]any, error) {
 	elems := tv.Elements()
 	size := len(elems)
 	l := make([]any, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		var err error
 		l[i], err = encodeValue(elems[i])
 		if err != nil {
@@ -135,7 +135,9 @@ func encode(v attr.Value) (encoded string, diags diag.Diagnostics) {
 			m, ok := vv.(map[string]any)
 			if !ok {
 				diags.Append(diag.NewErrorDiagnostic(
-					"List of manifests contained an invalid resource", fmt.Sprintf("value doesn't seem to be a manifest: %#v", vv)))
+					"List of manifests contained an invalid resource",
+					fmt.Sprintf("value doesn't seem to be a manifest: %#v", vv),
+				))
 			}
 			s, diags := marshal(m)
 			if diags.HasError() {

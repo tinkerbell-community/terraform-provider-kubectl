@@ -51,7 +51,7 @@ func NewFoundryFromSpecV2(spec []byte) (Foundry, error) {
 	return &f, nil
 }
 
-// Foundry is a mechanism to construct tftypes out of OpenAPI specifications
+// Foundry is a mechanism to construct tftypes out of OpenAPI specifications.
 type Foundry interface {
 	GetTypeByGVK(gvk schema.GroupVersionKind) (tftypes.Type, map[string]string, error)
 }
@@ -65,14 +65,14 @@ type foapiv2 struct {
 }
 
 // GetTypeByGVK looks up a type by its GVK in the Definitions sections of
-// the OpenAPI spec and returns its (nearest) tftypes.Type equivalent
+// the OpenAPI spec and returns its (nearest) tftypes.Type equivalent.
 func (f *foapiv2) GetTypeByGVK(
 	gvk schema.GroupVersionKind,
 ) (tftypes.Type, map[string]string, error) {
 	f.gate.Lock()
 	defer f.gate.Unlock()
 
-	var hints map[string]string = make(map[string]string)
+	hints := make(map[string]string)
 	ap := tftypes.AttributePath{}
 
 	// ObjectMeta isn't discoverable via the index because it's not tagged with "x-kubernetes-group-version-kind" in OpenAPI spec
@@ -119,7 +119,7 @@ func (f *foapiv2) getTypeByID(
 }
 
 // buildGvkIndex builds the reverse lookup index that associates each GVK
-// to its corresponding string key in the swagger.Definitions map
+// to its corresponding string key in the swagger.Definitions map.
 func (f *foapiv2) buildGvkIndex() error {
 	for did, dRef := range f.swagger.Definitions {
 		sRef := openapi2conv.ToV3SchemaRef(dRef)
@@ -135,7 +135,7 @@ func (f *foapiv2) buildGvkIndex() error {
 		gvk := []schema.GroupVersionKind{}
 		err = json.Unmarshal(([]byte)(ex.(json.RawMessage)), &gvk)
 		if err != nil {
-			return fmt.Errorf("failed to unmarshall GVK from OpenAPI schema extention: %v", err)
+			return fmt.Errorf("failed to unmarshall GVK from OpenAPI schema extension: %v", err)
 		}
 		for i := range gvk {
 			f.gkvIndex.Store(gvk[i], did)

@@ -2,23 +2,20 @@ package kubectl
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"log"
-	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
-	"github.com/alekc/terraform-provider-kubectl/yaml"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -28,20 +25,21 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/thedevsaddam/gojsonq/v2"
-	apps_v1 "k8s.io/api/apps/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/watch"
+	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource                = &manifestResource{}
-	_ resource.ResourceWithConfigure   = &manifestResource{}
-	_ resource.ResourceWithImportState = &manifestResource{}
-	_ resource.ResourceWithModifyPlan  = &manifestResource{}
+	_ resource.Resource                   = &manifestResource{}
+	_ resource.ResourceWithConfigure      = &manifestResource{}
+	_ resource.ResourceWithImportState    = &manifestResource{}
+	_ resource.ResourceWithModifyPlan     = &manifestResource{}
+	_ resource.ResourceWithValidateConfig = &manifestResource{}
 )
 
 // manifestResource defines the resource implementation.
@@ -69,14 +67,30 @@ type manifestResourceModel struct {
 // waitModel describes the wait block.
 type waitModel struct {
 	Rollout    types.Bool `tfsdk:"rollout"`
-	Fields     types.Map  `tfsdk:"fields"`
+	Fields     types.List `tfsdk:"field"`
 	Conditions types.List `tfsdk:"condition"`
+	ErrorOn    types.List `tfsdk:"error_on"`
+}
+
+// waitFieldModel describes a field matcher in the wait block.
+type waitFieldModel struct {
+	Key       types.String `tfsdk:"key"`
+	Value     types.String `tfsdk:"value"`
+	ValueType types.String `tfsdk:"value_type"`
 }
 
 // waitConditionModel describes a condition in the wait block.
 type waitConditionModel struct {
 	Type   types.String `tfsdk:"type"`
 	Status types.String `tfsdk:"status"`
+}
+
+// waitErrorOnModel describes an error_on condition in the wait block.
+// If a matched condition is detected, the apply fails immediately.
+type waitErrorOnModel struct {
+	Key     types.String `tfsdk:"key"`
+	Value   types.String `tfsdk:"value"`
+	Message types.String `tfsdk:"message"`
 }
 
 // fieldManagerModel describes the field_manager block.
@@ -148,8 +162,8 @@ func (r *manifestResource) Schema(
 				MarkdownDescription: "The full resource object as returned by the API server.",
 			},
 			"computed_fields": schema.ListAttribute{
-				ElementType:         types.StringType,
-				Optional:            true,
+				ElementType: types.StringType,
+				Optional:    true,
 				MarkdownDescription: "List of manifest fields whose values may be altered by the API server during apply. " +
 					"Defaults to: `[\"metadata.annotations\", \"metadata.labels\"]`",
 			},
@@ -188,13 +202,33 @@ func (r *manifestResource) Schema(
 							Optional:            true,
 							MarkdownDescription: "Wait for rollout to complete on resources that support `kubectl rollout status`.",
 						},
-						"fields": schema.MapAttribute{
-							ElementType:         types.StringType,
-							Optional:            true,
-							MarkdownDescription: "A map of field paths to expected values. Wait until all match.",
-						},
 					},
 					Blocks: map[string]schema.Block{
+						"field": schema.ListNestedBlock{
+							MarkdownDescription: "Wait for a resource field to reach an expected value. " +
+								"Multiple `field` blocks can be specified; all must match.",
+							NestedObject: schema.NestedBlockObject{
+								Attributes: map[string]schema.Attribute{
+									"key": schema.StringAttribute{
+										Required:            true,
+										MarkdownDescription: "JSON path to the field to check (e.g., `status.phase`, `status.podIP`).",
+									},
+									"value": schema.StringAttribute{
+										Required:            true,
+										MarkdownDescription: "The expected value or regex pattern to match.",
+									},
+									"value_type": schema.StringAttribute{
+										Optional:            true,
+										Computed:            true,
+										Default:             stringdefault.StaticString("eq"),
+										MarkdownDescription: "Comparison type: `eq` for exact match (default) or `regex` for regular expression matching.",
+										Validators: []validator.String{
+											stringvalidator.OneOf("eq", "regex"),
+										},
+									},
+								},
+							},
+						},
 						"condition": schema.ListNestedBlock{
 							MarkdownDescription: "Wait for status conditions to match.",
 							NestedObject: schema.NestedBlockObject{
@@ -206,6 +240,28 @@ func (r *manifestResource) Schema(
 									"status": schema.StringAttribute{
 										Optional:            true,
 										MarkdownDescription: "The condition status.",
+									},
+								},
+							},
+						},
+						"error_on": schema.ListNestedBlock{
+							MarkdownDescription: "Fail the apply immediately if any of these conditions are detected. " +
+								"Use this to detect error states during waiting, such as CrashLoopBackOff or Failed status. " +
+								"The `key` is a JSON path (e.g., `status.containerStatuses.0.state.waiting.reason`) and " +
+								"`value` is a regex pattern matched against the field value.",
+							NestedObject: schema.NestedBlockObject{
+								Attributes: map[string]schema.Attribute{
+									"key": schema.StringAttribute{
+										Required:            true,
+										MarkdownDescription: "JSON path to the field to check (e.g., `status.phase`, `status.conditions.0.reason`).",
+									},
+									"value": schema.StringAttribute{
+										Required:            true,
+										MarkdownDescription: "Regex pattern to match against the field value. If matched, the apply fails immediately.",
+									},
+									"message": schema.StringAttribute{
+										Optional:            true,
+										MarkdownDescription: "Custom error message to display when this error condition is matched.",
 									},
 								},
 							},
@@ -264,6 +320,70 @@ func (r *manifestResource) Configure(
 	r.providerData = providerData
 }
 
+// ValidateConfig validates the resource configuration.
+func (r *manifestResource) ValidateConfig(
+	ctx context.Context,
+	req resource.ValidateConfigRequest,
+	resp *resource.ValidateConfigResponse,
+) {
+	var config manifestResourceModel
+	diags := req.Config.Get(ctx, &config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Validate metadata has "name"
+	if !config.Metadata.IsNull() && !config.Metadata.IsUnknown() {
+		metaMap, d := dynamicToMap(ctx, config.Metadata)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() && metaMap != nil {
+			if _, ok := metaMap["name"]; !ok {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("metadata"),
+					"Missing required field",
+					"metadata must contain a 'name' field",
+				)
+			}
+		}
+	}
+
+	// Validate wait block — only one waiter type allowed
+	if !config.Wait.IsNull() && !config.Wait.IsUnknown() {
+		var waitModels []waitModel
+		d := config.Wait.ElementsAs(ctx, &waitModels, false)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() && len(waitModels) > 0 {
+			w := waitModels[0]
+			waiters := 0
+			if !w.Rollout.IsNull() && w.Rollout.ValueBool() {
+				waiters++
+			}
+			if !w.Fields.IsNull() && !w.Fields.IsUnknown() {
+				var fields []waitFieldModel
+				w.Fields.ElementsAs(ctx, &fields, false)
+				if len(fields) > 0 {
+					waiters++
+				}
+			}
+			if !w.Conditions.IsNull() && !w.Conditions.IsUnknown() {
+				var conditions []waitConditionModel
+				w.Conditions.ElementsAs(ctx, &conditions, false)
+				if len(conditions) > 0 {
+					waiters++
+				}
+			}
+			if waiters > 1 {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("wait"),
+					"Invalid wait configuration",
+					"You may only set one of rollout, field, or condition in a wait block.",
+				)
+			}
+		}
+	}
+}
+
 // Create creates a new Kubernetes resource.
 func (r *manifestResource) Create(
 	ctx context.Context,
@@ -308,15 +428,6 @@ func (r *manifestResource) Create(
 		resp.Diagnostics.AddError(
 			"Failed to Create Resource",
 			fmt.Sprintf("Could not apply manifest: %s", err),
-		)
-		return
-	}
-
-	// Read back to get computed values
-	if err := r.readManifest(createCtx, &plan); err != nil {
-		resp.Diagnostics.AddError(
-			"Failed to Read Resource",
-			fmt.Sprintf("Could not read manifest after creation: %s", err),
 		)
 		return
 	}
@@ -375,20 +486,20 @@ func (r *manifestResource) Update(
 	}
 
 	// Get timeout
-	createTimeout, diags := plan.Timeouts.Create(ctx, 10*time.Minute)
+	updateTimeout, diags := plan.Timeouts.Update(ctx, 10*time.Minute)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	updateCtx, cancel := context.WithTimeout(ctx, createTimeout)
+	updateCtx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
 	// Apply with retry
 	retryConfig := backoff.NewExponentialBackOff()
 	retryConfig.InitialInterval = 3 * time.Second
 	retryConfig.MaxInterval = 30 * time.Second
-	retryConfig.MaxElapsedTime = createTimeout
+	retryConfig.MaxElapsedTime = updateTimeout
 
 	retryCount := r.providerData.ApplyRetryCount
 	var backoffStrategy backoff.BackOff = retryConfig
@@ -403,15 +514,6 @@ func (r *manifestResource) Update(
 		resp.Diagnostics.AddError(
 			"Failed to Update Resource",
 			fmt.Sprintf("Could not apply manifest: %s", err),
-		)
-		return
-	}
-
-	// Read back
-	if err := r.readManifest(updateCtx, &plan); err != nil {
-		resp.Diagnostics.AddError(
-			"Failed to Read Resource",
-			fmt.Sprintf("Could not read manifest after update: %s", err),
 		)
 		return
 	}
@@ -460,75 +562,100 @@ func (r *manifestResource) ImportState(
 	req resource.ImportStateRequest,
 	resp *resource.ImportStateResponse,
 ) {
-	// Expected format: apiVersion//kind//name//namespace
-	// or apiVersion//kind//name for cluster-scoped resources
-	idParts := strings.Split(req.ID, "//")
-	if len(idParts) != 3 && len(idParts) != 4 {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf(
-				"Expected ID in format 'apiVersion//kind//name//namespace' or "+
-					"'apiVersion//kind//name' for cluster-scoped resources, got: %s",
-				req.ID,
-			),
-		)
-		return
-	}
+	// Support both formats:
+	// 1. apiVersion=<value>,kind=<value>,name=<value>[,namespace=<value>]
+	// 2. apiVersion//kind//name[//namespace]
+	var apiVersion, kind, name, namespace string
 
-	apiVersion := idParts[0]
-	kind := idParts[1]
-	name := idParts[2]
-	namespace := ""
-	if len(idParts) == 4 {
-		namespace = idParts[3]
-	}
-
-	// Build minimal YAML
-	yamlBody := fmt.Sprintf(`apiVersion: %s
-kind: %s
-metadata:
-  name: %s`, apiVersion, kind, name)
-
-	if namespace != "" {
-		yamlBody = fmt.Sprintf(`apiVersion: %s
-kind: %s
-metadata:
-  name: %s
-  namespace: %s`, apiVersion, kind, name, namespace)
-	}
-
-	// Parse to validate
-	manifest, err := yaml.ParseYAML(yamlBody)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Failed to Parse Import YAML",
-			fmt.Sprintf("Could not parse constructed YAML: %s", err),
-		)
-		return
-	}
-
-	// TODO: Implement getRestClientFromUnstructured and read from cluster
-	// For now, set basic state
-	model := manifestResourceModel{
-		YAMLBody:        types.StringValue(yamlBody),
-		APIVersion:      types.StringValue(apiVersion),
-		Kind:            types.StringValue(kind),
-		Name:            types.StringValue(name),
-		ForceNew:        types.BoolValue(false),
-		ServerSideApply: types.BoolValue(false),
-		ApplyOnly:       types.BoolValue(false),
-	}
-
-	if namespace != "" {
-		model.Namespace = types.StringValue(namespace)
+	if strings.Contains(req.ID, "=") {
+		// ParseResourceID format (key=value pairs)
+		gvk, n, ns, err := util.ParseResourceID(req.ID)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Failed to parse import ID: %s", err),
+			)
+			return
+		}
+		apiVersion = gvk.GroupVersion().String()
+		kind = gvk.Kind
+		name = n
+		namespace = ns
 	} else {
-		model.Namespace = types.StringNull()
+		// // separated format
+		idParts := strings.Split(req.ID, "//")
+		if len(idParts) != 3 && len(idParts) != 4 {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf(
+					"Expected ID in format 'apiVersion//kind//name//namespace' or "+
+						"'apiVersion//kind//name' for cluster-scoped resources, got: %s",
+					req.ID,
+				),
+			)
+			return
+		}
+		apiVersion = idParts[0]
+		kind = idParts[1]
+		name = idParts[2]
+		if len(idParts) == 4 {
+			namespace = idParts[3]
+		}
 	}
 
-	model.ID = types.StringValue(manifest.GetSelfLink())
+	// Build metadata from import ID
+	metadataMap := map[string]any{
+		"name": name,
+	}
+	if namespace != "" {
+		metadataMap["namespace"] = namespace
+	}
 
-	// Read from Kubernetes to populate remaining fields
-	if err := r.readManifest(ctx, &model); err != nil {
+	metadataDynamic, diags := mapToDynamic(ctx, metadataMap)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	model := manifestResourceModel{
+		ID:         types.StringValue(req.ID),
+		APIVersion: types.StringValue(apiVersion),
+		Kind:       types.StringValue(kind),
+		Metadata:   metadataDynamic,
+		Spec:       types.DynamicNull(),
+		Status:     types.DynamicNull(),
+		Object:     types.DynamicNull(),
+		ApplyOnly:  types.BoolValue(false),
+	}
+
+	// Attempt OpenAPI-aware import if we have provider data
+	if r.providerData != nil {
+		gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+		objectType, typeHints, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
+		if err == nil && objectType != nil {
+			if importErr := r.readManifestWithOpenAPI(ctx, &model, objectType, typeHints); importErr != nil {
+				resp.Diagnostics.AddError(
+					"Failed to Import Resource",
+					fmt.Sprintf("Could not read resource from Kubernetes: %s", importErr),
+				)
+				return
+			}
+
+			resp.Diagnostics.AddWarning(
+				"Apply needed after 'import'",
+				"Please run apply after a successful import to realign the resource state to the configuration in Terraform.",
+			)
+
+			diags = resp.State.Set(ctx, model)
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+		// Fall through to basic read if OpenAPI resolution fails
+		log.Printf("[WARN] Could not resolve OpenAPI type during import: %v", err)
+	}
+
+	// Fall back to basic read
+	if err := r.readManifestV2(ctx, &model); err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Import Resource",
 			fmt.Sprintf("Could not read resource from Kubernetes: %s", err),
@@ -536,18 +663,23 @@ metadata:
 		return
 	}
 
+	resp.Diagnostics.AddWarning(
+		"Apply needed after 'import'",
+		"Please run apply after a successful import to realign the resource state to the configuration in Terraform.",
+	)
+
 	// Set state
-	diags := resp.State.Set(ctx, model)
+	diags = resp.State.Set(ctx, model)
 	resp.Diagnostics.Append(diags...)
 }
 
-// ModifyPlan handles plan modification for drift detection and force_new.
+// ModifyPlan handles plan modification with OpenAPI type resolution.
 func (r *manifestResource) ModifyPlan(
 	ctx context.Context,
 	req resource.ModifyPlanRequest,
 	resp *resource.ModifyPlanResponse,
 ) {
-	// Only modify plan during updates
+	// Only modify plan during updates (not create or destroy)
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
@@ -564,1097 +696,762 @@ func (r *manifestResource) ModifyPlan(
 		return
 	}
 
-	// If force_new is set and yaml_body changed, require replace
-	if !plan.ForceNew.IsNull() && plan.ForceNew.ValueBool() {
-		if !plan.YAMLBody.Equal(state.YAMLBody) {
-			resp.RequiresReplace = append(resp.RequiresReplace, path.Root("yaml_body"))
+	// Check if metadata.name or metadata.namespace changed — requires replacement
+	planName, _ := extractMetadataField(ctx, plan.Metadata, "name")
+	stateName, _ := extractMetadataField(ctx, state.Metadata, "name")
+	planNamespace, _ := extractMetadataField(ctx, plan.Metadata, "namespace")
+	stateNamespace, _ := extractMetadataField(ctx, state.Metadata, "namespace")
+
+	if planName != stateName {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("metadata"))
+	}
+	if planNamespace != stateNamespace {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("metadata"))
+	}
+
+	// Attempt OpenAPI type resolution for computed field handling
+	if r.providerData != nil && !plan.APIVersion.IsUnknown() && !plan.Kind.IsUnknown() {
+		r.modifyPlanWithOpenAPI(ctx, &plan, &state, resp)
+		if resp.Diagnostics.HasError() {
+			return
 		}
-	}
-
-	// Check if YAML body is known (not interpolated)
-	if plan.YAMLBody.IsUnknown() {
-		log.Printf("[TRACE] yaml_body value interpolated, setting computed fields as unknown")
-		plan.YAMLBodyParsed = types.StringUnknown()
-		plan.YAMLInCluster = types.StringUnknown()
-		diags = resp.Plan.Set(ctx, plan)
-		resp.Diagnostics.Append(diags...)
-		return
-	}
-
-	// Parse YAML and set computed fields
-	parsedYaml, err := yaml.ParseYAML(plan.YAMLBody.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Failed to Parse YAML",
-			fmt.Sprintf("Could not parse yaml_body: %s", err),
-		)
-		return
-	}
-
-	// Apply namespace override if set
-	if !plan.OverrideNamespace.IsNull() {
-		parsedYaml.SetNamespace(plan.OverrideNamespace.ValueString())
-	}
-
-	// Set computed fields from parsed YAML
-	plan.APIVersion = types.StringValue(parsedYaml.GetAPIVersion())
-	plan.Kind = types.StringValue(parsedYaml.GetKind())
-	plan.Name = types.StringValue(parsedYaml.GetName())
-
-	if parsedYaml.GetNamespace() != "" {
-		plan.Namespace = types.StringValue(parsedYaml.GetNamespace())
 	} else {
-		plan.Namespace = types.StringNull()
+		// Without OpenAPI, just mark computed fields as unknown
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
 	}
 
-	// Create obfuscated YAML for display
-	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, parsedYaml, plan.SensitiveFields)
-	if err == nil {
-		yamlStr, err := obfuscatedYaml.AsYAML()
-		if err == nil {
-			plan.YAMLBodyParsed = types.StringValue(yamlStr)
-		}
-	}
-
-	// Detect UID drift
-	if !state.UID.IsNull() && !state.LiveUID.IsNull() {
-		if !state.UID.Equal(state.LiveUID) {
-			log.Printf(
-				"[TRACE] DETECTED UID DRIFT %s vs %s",
-				state.UID.ValueString(),
-				state.LiveUID.ValueString(),
-			)
-			plan.UID = types.StringUnknown()
-		}
-	}
-
-	// Enhanced cluster read for better drift detection
-	// Read from cluster to compare critical fields that might require replacement
-	restClient := util.GetRestClientFromUnstructured(
-		ctx,
-		parsedYaml,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
-	)
-	if restClient.Error == nil {
-		// Try to read current state from cluster
-		liveResource, err := restClient.ResourceInterface.Get(
-			ctx,
-			parsedYaml.GetName(),
-			meta_v1.GetOptions{},
-		)
-		if err == nil {
-			// Check if immutable fields changed (like some labels, annotations patterns)
-			// For now, we primarily rely on force_new flag and UID drift
-			log.Printf(
-				"[TRACE] Successfully read live resource %s for plan comparison",
-				parsedYaml.GetSelfLink(),
-			)
-
-			// Store live UID for comparison
-			if liveUID := string(liveResource.GetUID()); liveUID != "" {
-				if !state.UID.IsNull() && state.UID.ValueString() != liveUID {
-					log.Printf("[TRACE] Resource UID mismatch detected, may require replacement")
-					resp.RequiresReplace = append(resp.RequiresReplace, path.Root("yaml_body"))
-				}
-			}
-		} else if !util.IsNotFoundError(err) {
-			log.Printf("[DEBUG] Could not read live resource during plan: %v", err)
-		}
-	}
-
-	// Detect manifest drift
-	if !state.YAMLInCluster.IsNull() && !state.LiveManifestInCluster.IsNull() {
-		if !state.YAMLInCluster.Equal(state.LiveManifestInCluster) {
-			log.Printf("[TRACE] DETECTED YAML STATE DIFFERENCE")
-			plan.YAMLInCluster = types.StringUnknown()
-		}
-	}
-
-	// Update plan
 	diags = resp.Plan.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 }
 
-// Helper methods (stubs - to be implemented)
+// modifyPlanWithOpenAPI uses OpenAPI spec to resolve the resource type and
+// handle computed fields during plan modification.
+func (r *manifestResource) modifyPlanWithOpenAPI(
+	ctx context.Context,
+	plan *manifestResourceModel,
+	state *manifestResourceModel,
+	resp *resource.ModifyPlanResponse,
+) {
+	apiVersion := plan.APIVersion.ValueString()
+	kind := plan.Kind.ValueString()
+	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
 
+	// Try to resolve OpenAPI type
+	objectType, _, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
+	if err != nil {
+		// If we can't resolve the type, continue without OpenAPI enhancement
+		log.Printf("[DEBUG] Could not resolve OpenAPI type for %s: %v", gvk.String(), err)
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	if !objectType.Is(tftypes.Object{}) {
+		// Non-structural CRD — no schema available
+		log.Printf("[DEBUG] Non-structural type for %s, skipping OpenAPI plan modification", gvk.String())
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	// Build manifest map from plan attributes for morphing
+	manifestMap := map[string]any{
+		"apiVersion": apiVersion,
+		"kind":       kind,
+	}
+
+	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
+		metaMap, d := dynamicToMap(ctx, plan.Metadata)
+		resp.Diagnostics.Append(d...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if metaMap != nil {
+			manifestMap["metadata"] = metaMap
+		}
+	}
+
+	if !plan.Spec.IsNull() && !plan.Spec.IsUnknown() {
+		specMap, d := dynamicToMap(ctx, plan.Spec)
+		resp.Diagnostics.Append(d...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if specMap != nil {
+			manifestMap["spec"] = specMap
+		}
+	}
+
+	// Convert to tftypes.Value using OpenAPI type
+	planTfValue, err := payload.ToTFValue(
+		manifestMap,
+		objectType,
+		nil,
+		tftypes.NewAttributePath(),
+	)
+	if err != nil {
+		log.Printf("[DEBUG] Could not convert plan to tftypes.Value: %v", err)
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	// Apply morph.ValueToType to coerce to OpenAPI type
+	morphedPlan, d := morph.ValueToType(planTfValue, objectType, tftypes.NewAttributePath())
+	if len(d) > 0 {
+		log.Printf("[DEBUG] Could not morph plan to OpenAPI type: %v", d)
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	// Apply morph.DeepUnknown to mark unspecified fields as unknown
+	completePlan, err := morph.DeepUnknown(objectType, morphedPlan, tftypes.NewAttributePath())
+	if err != nil {
+		log.Printf("[DEBUG] Could not apply DeepUnknown: %v", err)
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	// Handle computed_fields: mark specified paths as unknown
+	computedFields := make(map[string]*tftypes.AttributePath)
+	if !plan.ComputedFields.IsNull() && !plan.ComputedFields.IsUnknown() {
+		var cfList []string
+		plan.ComputedFields.ElementsAs(ctx, &cfList, false)
+		for _, cf := range cfList {
+			atp, err := FieldPathToTftypesPath(cf)
+			if err != nil {
+				log.Printf("[DEBUG] Could not parse computed_fields path %s: %v", cf, err)
+				continue
+			}
+			computedFields[atp.String()] = atp
+		}
+	}
+	if len(computedFields) == 0 {
+		// Default computed fields
+		atp := tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("annotations")
+		computedFields[atp.String()] = atp
+		atp = tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("labels")
+		computedFields[atp.String()] = atp
+	}
+
+	// Transform to mark computed_fields as unknown
+	completePlan, err = tftypes.Transform(
+		completePlan,
+		func(ap *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+			if _, ok := computedFields[ap.String()]; ok {
+				return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
+			}
+			return v, nil
+		},
+	)
+	if err != nil {
+		log.Printf("[DEBUG] Could not mark computed fields: %v", err)
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	// Convert back to map[string]any for framework
+	resultMap, err := payload.FromTFValue(completePlan, nil, tftypes.NewAttributePath())
+	if err != nil {
+		log.Printf("[DEBUG] Could not convert morphed plan back to map: %v", err)
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	resultContent, ok := resultMap.(map[string]any)
+	if !ok {
+		plan.Status = types.DynamicUnknown()
+		plan.Object = types.DynamicUnknown()
+		return
+	}
+
+	// Update plan metadata from morphed result
+	if meta, ok := resultContent["metadata"].(map[string]any); ok {
+		metaDynamic, d := mapToDynamic(ctx, meta)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() {
+			plan.Metadata = metaDynamic
+		}
+	}
+
+	// Update plan spec from morphed result
+	if spec, ok := resultContent["spec"].(map[string]any); ok {
+		specDynamic, d := mapToDynamic(ctx, spec)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() {
+			plan.Spec = specDynamic
+		}
+	}
+
+	// Mark status and object as unknown (computed)
+	plan.Status = types.DynamicUnknown()
+	plan.Object = types.DynamicUnknown()
+}
+
+// applyManifest applies the manifest to Kubernetes using server-side apply,
+// then handles wait conditions including error_on.
 func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	yamlBody := model.YAMLBody.ValueString()
-
-	// Parse YAML into manifest
-	manifest, err := yaml.ParseYAML(yamlBody)
-	if err != nil {
-		return fmt.Errorf("failed to parse kubernetes resource: %w", err)
+	// Delegate to applyManifestV2 for the actual apply
+	if err := r.applyManifestV2(ctx, model); err != nil {
+		return err
 	}
 
-	// Apply namespace override if provided
-	if !model.OverrideNamespace.IsNull() {
-		manifest.SetNamespace(model.OverrideNamespace.ValueString())
+	// Read back to populate state from server response
+	if err := r.readManifestV2(ctx, model); err != nil {
+		return fmt.Errorf("failed to read manifest after apply: %w", err)
 	}
 
-	log.Printf("[DEBUG] %v apply kubernetes resource:\n%s", manifest, yamlBody)
-
-	// Create REST client for this resource type
-	restClient := util.GetRestClientFromUnstructured(
-		ctx,
-		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
-	)
-	if restClient.Error != nil {
-		return fmt.Errorf(
-			"%v failed to create kubernetes rest client for resource: %w",
-			manifest,
-			restClient.Error,
-		)
+	// Handle wait block if specified
+	if model.Wait.IsNull() || model.Wait.IsUnknown() {
+		return nil
 	}
 
-	// Convert manifest back to YAML (in case namespace was overridden)
-	yamlBody, err = manifest.AsYAML()
-	if err != nil {
-		return fmt.Errorf("%v failed to convert to yaml: %w", manifest, err)
+	var waitModels []waitModel
+	diags := model.Wait.ElementsAs(ctx, &waitModels, false)
+	if diags.HasError() || len(waitModels) == 0 {
+		return nil
 	}
 
-	// Create temp file for kubectl apply
-	tmpfile, err := os.CreateTemp("", "*kubectl_manifest.yaml")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer os.Remove(tmpfile.Name())
+	wait := waitModels[0]
 
-	if _, err := tmpfile.Write([]byte(yamlBody)); err != nil {
-		tmpfile.Close()
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-	if err := tmpfile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
+	createTimeout, d := model.Timeouts.Create(ctx, 10*time.Minute)
+	if d.HasError() {
+		return fmt.Errorf("failed to get create timeout: %v", d)
 	}
 
-	// Create apply options
-	applyOptions := util.NewApplyOptions(yamlBody, r.providerData.RestConfig)
+	timeoutCtx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
-	// Configure apply options
-	validateSchema := true
-	if !model.ValidateSchema.IsNull() {
-		validateSchema = model.ValidateSchema.ValueBool()
+	// Get name/namespace for log messages
+	name, _ := extractMetadataField(ctx, model.Metadata, "name")
+	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
+	kind := model.Kind.ValueString()
+	apiVersion := model.APIVersion.ValueString()
+
+	// Check error_on conditions first during wait
+	var errorOnConditions []waitErrorOnModel
+	if !wait.ErrorOn.IsNull() {
+		wait.ErrorOn.ElementsAs(ctx, &errorOnConditions, false)
 	}
 
-	serverSideApply := false
-	if !model.ServerSideApply.IsNull() {
-		serverSideApply = model.ServerSideApply.ValueBool()
+	// Get dynamic client resource interface for waiters
+	getResourceInterface := func() (dynamic.ResourceInterface, error) {
+		gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+		rm, err := r.providerData.getRestMapper()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get REST mapper: %w", err)
+		}
+		client, err := r.providerData.getDynamicClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get dynamic client: %w", err)
+		}
+		rmapping, err := rm.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get REST mapping: %w", err)
+		}
+		rcl := client.Resource(rmapping.Resource)
+		if namespace != "" {
+			return rcl.Namespace(namespace), nil
+		}
+		return rcl, nil
 	}
 
-	fieldManager := "kubectl"
-	if !model.FieldManager.IsNull() {
-		fieldManager = model.FieldManager.ValueString()
-	}
+	// Handle rollout wait using RolloutWaiter (polymorphichelpers)
+	if !wait.Rollout.IsNull() && wait.Rollout.ValueBool() {
+		log.Printf("[INFO] Waiting for rollout of %s/%s", kind, name)
 
-	forceConflicts := false
-	if !model.ForceConflicts.IsNull() {
-		forceConflicts = model.ForceConflicts.ValueBool()
-	}
+		rs, err := getResourceInterface()
+		if err != nil {
+			return fmt.Errorf("failed to set up rollout wait: %w", err)
+		}
 
-	util.ConfigureApplyOptions(
-		applyOptions,
-		manifest,
-		tmpfile.Name(),
-		validateSchema,
-		serverSideApply,
-		fieldManager,
-		forceConflicts,
-	)
+		waiter := &RolloutWaiter{
+			resource:     rs,
+			resourceName: name,
+			logger:       r.providerData.logger,
+		}
 
-	log.Printf("[INFO] %s perform apply of manifest", manifest)
-
-	// Run apply
-	if err := applyOptions.Run(); err != nil {
-		return fmt.Errorf("%v failed to run apply: %w", manifest, err)
-	}
-
-	log.Printf("[INFO] %v manifest applied, fetch resource from kubernetes", manifest)
-
-	// Get the resource from Kubernetes
-	rawResponse, err := restClient.ResourceInterface.Get(
-		ctx,
-		manifest.GetName(),
-		meta_v1.GetOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("%v failed to fetch resource from kubernetes: %w", manifest, err)
-	}
-
-	// Set response wrapper
-	response := yaml.NewFromUnstructured(rawResponse)
-
-	// Generate ID (apiVersion//kind//namespace//name or apiVersion//kind//name)
-	if response.HasNamespace() {
-		model.ID = types.StringValue(fmt.Sprintf(
-			"%s//%s//%s//%s",
-			response.GetAPIVersion(),
-			response.GetKind(),
-			response.GetNamespace(),
-			response.GetName(),
-		))
-	} else {
-		model.ID = types.StringValue(fmt.Sprintf(
-			"%s//%s//%s",
-			response.GetAPIVersion(),
-			response.GetKind(),
-			response.GetName(),
-		))
-	}
-
-	// Set computed values
-	model.APIVersion = types.StringValue(response.GetAPIVersion())
-	model.Kind = types.StringValue(response.GetKind())
-	model.Name = types.StringValue(response.GetName())
-
-	if response.HasNamespace() {
-		model.Namespace = types.StringValue(response.GetNamespace())
-	} else {
-		model.Namespace = types.StringNull()
-	}
-
-	model.UID = types.StringValue(string(response.GetUID()))
-	model.LiveUID = types.StringValue(string(response.GetUID()))
-
-	// Set yaml_body_parsed with the parsed user input (not the server response)
-	// This represents what the user provided after parsing and namespace override
-	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, manifest, model.SensitiveFields)
-	if err == nil {
-		yamlStr, err := obfuscatedYaml.AsYAML()
-		if err == nil {
-			model.YAMLBodyParsed = types.StringValue(yamlStr)
+		if len(errorOnConditions) > 0 {
+			if err := r.waitWithErrorCheck(timeoutCtx, rs, waiter, name, errorOnConditions); err != nil {
+				return fmt.Errorf("failed to wait for rollout: %w", err)
+			}
 		} else {
-			// Fallback to original yaml_body if conversion fails
-			model.YAMLBodyParsed = model.YAMLBody
+			if err := waiter.Wait(timeoutCtx); err != nil {
+				return fmt.Errorf("failed to wait for rollout: %w", err)
+			}
 		}
-	} else {
-		// Fallback to original yaml_body if obfuscation fails
-		model.YAMLBodyParsed = model.YAMLBody
+
+		log.Printf("[INFO] Rollout complete for %s/%s", kind, name)
 	}
 
-	log.Printf("[DEBUG] %v fetched successfully, set id to: %v", manifest, model.ID.ValueString())
+	// Handle condition and field waits
+	var conditions []waitConditionModel
+	if !wait.Conditions.IsNull() {
+		wait.Conditions.ElementsAs(ctx, &conditions, false)
+	}
 
-	// Handle wait_for_rollout if specified
-	if !model.WaitForRollout.IsNull() && model.WaitForRollout.ValueBool() {
-		createTimeout, diags := model.Timeouts.Create(ctx, 10*time.Minute)
-		if diags.HasError() {
-			return fmt.Errorf("failed to get create timeout: %v", diags)
-		}
+	var waitFields []waitFieldModel
+	if !wait.Fields.IsNull() {
+		wait.Fields.ElementsAs(ctx, &waitFields, false)
+	}
 
-		timeoutCtx, cancel := context.WithTimeout(ctx, createTimeout)
-		defer cancel()
+	if len(conditions) > 0 || len(waitFields) > 0 {
+		log.Printf("[INFO] Waiting for conditions/fields on %s/%s", kind, name)
 
-		log.Printf("[INFO] %v waiting for rollout", manifest)
-
-		switch manifest.GetKind() {
-		case "Deployment":
-			err = r.waitForDeployment(
-				timeoutCtx,
-				manifest.GetNamespace(),
-				manifest.GetName(),
-				createTimeout,
-			)
-		case "StatefulSet":
-			err = r.waitForStatefulSet(
-				timeoutCtx,
-				manifest.GetNamespace(),
-				manifest.GetName(),
-				createTimeout,
-			)
-		case "DaemonSet":
-			err = r.waitForDaemonSet(
-				timeoutCtx,
-				manifest.GetNamespace(),
-				manifest.GetName(),
-				createTimeout,
-			)
-		default:
-			log.Printf("[WARN] wait_for_rollout not supported for kind %s", manifest.GetKind())
-		}
-
+		rs, err := getResourceInterface()
 		if err != nil {
-			return fmt.Errorf("%v failed to wait for rollout: %w", manifest, err)
+			return fmt.Errorf("failed to set up condition/field wait: %w", err)
 		}
 
-		log.Printf("[INFO] %v rollout complete", manifest)
-	}
-
-	// Handle wait_for conditions if specified
-	if !model.WaitFor.IsNull() && !model.WaitFor.IsUnknown() {
-		var waitForList []waitForModel
-		diags := model.WaitFor.ElementsAs(ctx, &waitForList, false)
-		if diags.HasError() || len(waitForList) == 0 {
-			return fmt.Errorf("failed to parse wait_for block")
+		// Get OpenAPI type for field wait
+		var objectType tftypes.Type
+		var typeHints map[string]string
+		if len(waitFields) > 0 {
+			gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+			objectType, typeHints, err = r.providerData.TFTypeFromOpenAPI(ctx, gvk, true)
+			if err != nil {
+				log.Printf("[WARN] Could not resolve OpenAPI type for field wait: %v", err)
+				objectType = tftypes.DynamicPseudoType
+			}
 		}
 
-		waitFor := waitForList[0]
+		// Build field matchers
+		var fieldMatchers []FieldMatcher
+		for _, f := range waitFields {
+			valueType := "eq"
+			if !f.ValueType.IsNull() && f.ValueType.ValueString() != "" {
+				valueType = f.ValueType.ValueString()
+			}
 
-		// Extract conditions and fields
-		var conditions []waitConditionModel
-		var fields []waitFieldModel
-		if !waitFor.Conditions.IsNull() {
-			waitFor.Conditions.ElementsAs(ctx, &conditions, false)
+			p, pErr := FieldPathToTftypesPath(f.Key.ValueString())
+			if pErr != nil {
+				return fmt.Errorf("invalid field path %q: %w", f.Key.ValueString(), pErr)
+			}
+
+			var re *regexp.Regexp
+			if valueType == "regex" {
+				re, err = regexp.Compile(f.Value.ValueString())
+				if err != nil {
+					return fmt.Errorf("invalid regex %q: %w", f.Value.ValueString(), err)
+				}
+			} else {
+				// For eq, create a regex that matches exactly
+				re = regexp.MustCompile("^" + regexp.QuoteMeta(f.Value.ValueString()) + "$")
+			}
+
+			fieldMatchers = append(fieldMatchers, FieldMatcher{
+				Path:         p,
+				ValueMatcher: re,
+			})
 		}
-		if !waitFor.Fields.IsNull() {
-			waitFor.Fields.ElementsAs(ctx, &fields, false)
+
+		// Build condition matchers
+		var conditionMatchers []ConditionMatcher
+		for _, c := range conditions {
+			conditionMatchers = append(conditionMatchers, ConditionMatcher{
+				Type:   c.Type.ValueString(),
+				Status: c.Status.ValueString(),
+			})
 		}
 
-		if len(conditions) == 0 && len(fields) == 0 {
-			return fmt.Errorf("wait_for block requires at least one condition or field")
-		}
-
-		createTimeout, diags := model.Timeouts.Create(ctx, 10*time.Minute)
-		if diags.HasError() {
-			return fmt.Errorf("failed to get create timeout: %v", diags)
-		}
-
-		timeoutCtx, cancel := context.WithTimeout(ctx, createTimeout)
-		defer cancel()
-
-		log.Printf("[INFO] %v waiting for conditions", manifest)
-
-		err = r.waitForConditions(
-			timeoutCtx,
-			restClient,
-			conditions,
-			fields,
-			manifest.GetName(),
-			createTimeout,
+		// Create waiter
+		waiter := NewResourceWaiterFromConfig(
+			rs,
+			name,
+			objectType,
+			typeHints,
+			false, // rollout already handled above
+			fieldMatchers,
+			conditionMatchers,
+			r.providerData.logger,
 		)
-		if err != nil {
-			return fmt.Errorf("%v failed to wait for conditions: %w", manifest, err)
+
+		// Run waiter with error_on checking if configured
+		if len(errorOnConditions) > 0 {
+			err = r.waitWithErrorCheck(timeoutCtx, rs, waiter, name, errorOnConditions)
+		} else {
+			err = waiter.Wait(timeoutCtx)
 		}
 
-		log.Printf("[INFO] %v conditions met", manifest)
+		if err != nil {
+			return fmt.Errorf("failed to wait for conditions: %w", err)
+		}
+
+		log.Printf("[INFO] Conditions/fields met for %s/%s", kind, name)
+	} else if len(errorOnConditions) > 0 {
+		// error_on conditions without any other waiter — check once
+		rs, err := getResourceInterface()
+		if err != nil {
+			return fmt.Errorf("failed to set up error_on check: %w", err)
+		}
+
+		res, err := rs.Get(ctx, name, meta_v1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get resource for error_on check: %w", err)
+		}
+
+		yamlJSON, err := res.MarshalJSON()
+		if err != nil {
+			return fmt.Errorf("failed to marshal resource for error_on check: %w", err)
+		}
+
+		for _, e := range errorOnConditions {
+			key := e.Key.ValueString()
+			value := e.Value.ValueString()
+
+			v := gojsonq.New().FromString(string(yamlJSON)).Find(key)
+			if v == nil {
+				continue
+			}
+
+			stringVal := fmt.Sprintf("%v", v)
+			matched, matchErr := regexp.MatchString(value, stringVal)
+			if matchErr != nil {
+				return fmt.Errorf("error_on: invalid regex %q: %w", value, matchErr)
+			}
+
+			if matched {
+				msg := ""
+				if !e.Message.IsNull() {
+					msg = e.Message.ValueString()
+				}
+				if msg != "" {
+					return fmt.Errorf(
+						"error condition met for %s: %s (key=%s, value=%s matched pattern %s)",
+						name, msg, key, stringVal, value,
+					)
+				}
+				return fmt.Errorf(
+					"error condition met for %s: key=%s value=%s matched pattern %s",
+					name, key, stringVal, value,
+				)
+			}
+		}
 	}
 
 	return nil
 }
 
+// waitWithErrorCheck runs the waiter while also checking for error_on conditions.
+func (r *manifestResource) waitWithErrorCheck(
+	ctx context.Context,
+	rs dynamic.ResourceInterface,
+	waiter Waiter,
+	name string,
+	errorOnConditions []waitErrorOnModel,
+) error {
+	errCh := make(chan error, 1)
+
+	// Run the waiter in a goroutine
+	go func() {
+		errCh <- waiter.Wait(ctx)
+	}()
+
+	// Check error_on conditions periodically while waiter runs
+	ticker := time.NewTicker(waiterSleepTime)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-errCh:
+			return err
+		case <-ticker.C:
+			// Check error conditions
+			res, err := rs.Get(ctx, name, meta_v1.GetOptions{})
+			if err != nil {
+				continue
+			}
+
+			yamlJSON, err := res.MarshalJSON()
+			if err != nil {
+				continue
+			}
+
+			for _, e := range errorOnConditions {
+				key := e.Key.ValueString()
+				value := e.Value.ValueString()
+
+				v := gojsonq.New().FromString(string(yamlJSON)).Find(key)
+				if v == nil {
+					continue
+				}
+
+				stringVal := fmt.Sprintf("%v", v)
+				matched, matchErr := regexp.MatchString(value, stringVal)
+				if matchErr != nil {
+					return fmt.Errorf("error_on: invalid regex %q: %w", value, matchErr)
+				}
+
+				if matched {
+					msg := ""
+					if !e.Message.IsNull() {
+						msg = e.Message.ValueString()
+					}
+					if msg != "" {
+						return fmt.Errorf(
+							"error condition met for %s: %s (key=%s, value=%s matched pattern %s)",
+							name, msg, key, stringVal, value,
+						)
+					}
+					return fmt.Errorf(
+						"error condition met for %s: key=%s value=%s matched pattern %s",
+						name, key, stringVal, value,
+					)
+				}
+			}
+		case <-ctx.Done():
+			return fmt.Errorf("%s timed out waiting for resource", name)
+		}
+	}
+}
+
+// readManifest reads a resource from Kubernetes and populates model state.
 func (r *manifestResource) readManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	yamlBody := model.YAMLBody.ValueString()
+	return r.readManifestV2(ctx, model)
+}
 
-	// Parse YAML to get resource identifiers
-	manifest, err := yaml.ParseYAML(yamlBody)
+// readManifestWithOpenAPI reads a resource using OpenAPI type resolution for better type fidelity.
+func (r *manifestResource) readManifestWithOpenAPI(
+	ctx context.Context,
+	model *manifestResourceModel,
+	objectType tftypes.Type,
+	typeHints map[string]string,
+) error {
+	// Extract name and namespace from metadata
+	name, err := extractMetadataField(ctx, model.Metadata, "name")
+	if err != nil || name == "" {
+		return fmt.Errorf("failed to extract name from metadata: %w", err)
+	}
+	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
+
+	// Get GVK
+	apiVersion := model.APIVersion.ValueString()
+	kind := model.Kind.ValueString()
+	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+
+	// Get REST mapper and dynamic client
+	rm, err := r.providerData.getRestMapper()
 	if err != nil {
-		return fmt.Errorf("failed to parse kubernetes resource: %w", err)
+		return fmt.Errorf("failed to get REST mapper: %w", err)
 	}
-
-	// Apply namespace override if provided
-	if !model.OverrideNamespace.IsNull() {
-		manifest.SetNamespace(model.OverrideNamespace.ValueString())
-	}
-
-	log.Printf("[DEBUG] %v reading kubernetes resource", manifest)
-
-	// Create REST client for this resource type
-	restClient := util.GetRestClientFromUnstructured(
-		ctx,
-		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
-	)
-	if restClient.Error != nil {
-		return fmt.Errorf(
-			"%v failed to create kubernetes rest client for resource: %w",
-			manifest,
-			restClient.Error,
-		)
-	}
-
-	// Get the resource from Kubernetes
-	rawResponse, err := restClient.ResourceInterface.Get(
-		ctx,
-		manifest.GetName(),
-		meta_v1.GetOptions{},
-	)
+	client, err := r.providerData.getDynamicClient()
 	if err != nil {
-		if util.IsNotFoundError(err) {
-			// Resource not found - will be removed from state by caller
-			return err
-		}
-		return fmt.Errorf("%v failed to fetch resource from kubernetes: %w", manifest, err)
+		return fmt.Errorf("failed to get dynamic client: %w", err)
 	}
 
-	// Set response wrapper
-	response := yaml.NewFromUnstructured(rawResponse)
+	// Get GVR from GVK
+	rmapping, err := rm.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return fmt.Errorf("failed to get REST mapping: %w", err)
+	}
+	gvr := rmapping.Resource
 
-	// Update computed values
-	model.APIVersion = types.StringValue(response.GetAPIVersion())
-	model.Kind = types.StringValue(response.GetKind())
-	model.Name = types.StringValue(response.GetName())
+	// Determine if namespaced
+	ns, err := IsResourceNamespaced(gvk, rm)
+	if err != nil {
+		return fmt.Errorf("failed to check if resource is namespaced: %w", err)
+	}
 
-	if response.HasNamespace() {
-		model.Namespace = types.StringValue(response.GetNamespace())
+	// Get resource from API
+	var result *meta_v1_unstruct.Unstructured
+	rcl := client.Resource(gvr)
+	if ns && namespace != "" {
+		result, err = rcl.Namespace(namespace).Get(ctx, name, meta_v1.GetOptions{})
 	} else {
-		model.Namespace = types.StringNull()
+		result, err = rcl.Get(ctx, name, meta_v1.GetOptions{})
+	}
+	if err != nil {
+		return err
 	}
 
-	// Update UID fields
-	model.LiveUID = types.StringValue(string(response.GetUID()))
+	// Remove server-side fields
+	content := RemoveServerSideFields(result.UnstructuredContent())
 
-	// If UID is not set, initialize it (for imports)
-	if model.UID.IsNull() || model.UID.IsUnknown() {
-		model.UID = types.StringValue(string(response.GetUID()))
+	// Convert using OpenAPI type
+	tfValue, err := payload.ToTFValue(content, objectType, typeHints, tftypes.NewAttributePath())
+	if err != nil {
+		// Fall back to basic read
+		return r.readManifestV2(ctx, model)
 	}
 
-	log.Printf("[DEBUG] %v read successfully", manifest)
+	// Apply morph.DeepUnknown and then UnknownToNull
+	tfValue, err = morph.DeepUnknown(objectType, tfValue, tftypes.NewAttributePath())
+	if err != nil {
+		return r.readManifestV2(ctx, model)
+	}
+	tfValue = morph.UnknownToNull(tfValue)
 
-	// Generate fingerprints for drift detection
-	fingerprint := r.generateFingerprints(ctx, manifest, rawResponse, model)
-	model.YAMLInCluster = types.StringValue(fingerprint)
-	model.LiveManifestInCluster = types.StringValue(fingerprint)
+	// Convert back to map and set state
+	resultMap, err := payload.FromTFValue(tfValue, nil, tftypes.NewAttributePath())
+	if err != nil {
+		return r.readManifestV2(ctx, model)
+	}
 
-	// Set yaml_body_parsed with the parsed user input (not the server response)
-	// This represents what the user provided after parsing and namespace override
-	obfuscatedYaml, err := r.obfuscateSensitiveFields(ctx, manifest, model.SensitiveFields)
-	if err == nil {
-		yamlStr, err := obfuscatedYaml.AsYAML()
-		if err == nil {
-			model.YAMLBodyParsed = types.StringValue(yamlStr)
-		} else {
-			// Fallback to original yaml_body if conversion fails
-			model.YAMLBodyParsed = model.YAMLBody
+	resultContent, ok := resultMap.(map[string]any)
+	if !ok {
+		return r.readManifestV2(ctx, model)
+	}
+
+	// Use setStateFromUnstructured but with the cleaned content
+	return r.setStateFromOpenAPIResult(ctx, resultContent, result, model)
+}
+
+// setStateFromOpenAPIResult populates the model from an OpenAPI-typed result map.
+func (r *manifestResource) setStateFromOpenAPIResult(
+	ctx context.Context,
+	content map[string]any,
+	rawObj *meta_v1_unstruct.Unstructured,
+	model *manifestResourceModel,
+) error {
+	model.APIVersion = types.StringValue(rawObj.GetAPIVersion())
+	model.Kind = types.StringValue(rawObj.GetKind())
+
+	// Set ID
+	namespace := rawObj.GetNamespace()
+	name := rawObj.GetName()
+	if namespace != "" {
+		model.ID = types.StringValue(fmt.Sprintf(
+			"%s//%s//%s//%s",
+			rawObj.GetAPIVersion(), rawObj.GetKind(), name, namespace,
+		))
+	} else {
+		model.ID = types.StringValue(fmt.Sprintf(
+			"%s//%s//%s",
+			rawObj.GetAPIVersion(), rawObj.GetKind(), name,
+		))
+	}
+
+	var diags diag.Diagnostics
+
+	// Convert metadata from cleaned content
+	if meta, ok := content["metadata"].(map[string]any); ok {
+		metaDynamic, d := mapToDynamic(ctx, meta)
+		diags.Append(d...)
+		if !diags.HasError() {
+			model.Metadata = metaDynamic
+		}
+	}
+
+	// Convert spec from cleaned content
+	if spec, ok := content["spec"].(map[string]any); ok {
+		specDynamic, d := mapToDynamic(ctx, spec)
+		diags.Append(d...)
+		if !diags.HasError() {
+			model.Spec = specDynamic
 		}
 	} else {
-		// Fallback to original yaml_body if obfuscation fails
-		model.YAMLBodyParsed = model.YAMLBody
+		model.Spec = types.DynamicNull()
+	}
+
+	// Status from raw object (server-side fields were removed from content)
+	rawContent := rawObj.UnstructuredContent()
+	if status, ok := rawContent["status"].(map[string]any); ok {
+		statusDynamic, d := mapToDynamic(ctx, status)
+		diags.Append(d...)
+		if !diags.HasError() {
+			model.Status = statusDynamic
+		}
+	} else {
+		model.Status = types.DynamicNull()
+	}
+
+	// Full object from raw
+	objectDynamic, d := mapToDynamic(ctx, rawContent)
+	diags.Append(d...)
+	if !diags.HasError() {
+		model.Object = objectDynamic
+	}
+
+	if diags.HasError() {
+		return fmt.Errorf("failed to set state: %v", diags)
 	}
 
 	return nil
 }
 
+// deleteManifest deletes a Kubernetes resource.
 func (r *manifestResource) deleteManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	yamlBody := model.YAMLBody.ValueString()
+	// Delegate to deleteManifestV2 for the actual delete
+	if err := r.deleteManifestV2(ctx, model); err != nil {
+		return err
+	}
 
-	// Parse YAML
-	manifest, err := yaml.ParseYAML(yamlBody)
+	// Wait for deletion to complete
+	name, _ := extractMetadataField(ctx, model.Metadata, "name")
+	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
+	apiVersion := model.APIVersion.ValueString()
+	kind := model.Kind.ValueString()
+
+	deleteTimeout, d := model.Timeouts.Delete(ctx, 5*time.Minute)
+	if d.HasError() {
+		log.Printf("[WARN] Could not parse delete timeout, using 5 minute default")
+		deleteTimeout = 5 * time.Minute
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
+	// Use dynamic client for deletion polling
+	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+	rm, err := r.providerData.getRestMapper()
 	if err != nil {
-		return fmt.Errorf("failed to parse kubernetes resource: %w", err)
+		log.Printf("[WARN] Cannot poll deletion status: %v", err)
+		return nil
 	}
-
-	// Apply namespace override if provided
-	if !model.OverrideNamespace.IsNull() {
-		manifest.SetNamespace(model.OverrideNamespace.ValueString())
-	}
-
-	log.Printf("[INFO] %v deleting kubernetes resource", manifest)
-
-	// Create REST client for this resource type
-	restClient := util.GetRestClientFromUnstructured(
-		ctx,
-		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
-	)
-	if restClient.Error != nil {
-		return fmt.Errorf(
-			"%v failed to create kubernetes rest client for resource: %w",
-			manifest,
-			restClient.Error,
-		)
-	}
-
-	// Determine cascade mode
-	cascadeMode := "background"
-	if !model.DeleteCascade.IsNull() {
-		cascadeMode = model.DeleteCascade.ValueString()
-	}
-
-	// Build delete options
-	deleteOptions := meta_v1.DeleteOptions{}
-
-	switch cascadeMode {
-	case "foreground":
-		propagationPolicy := meta_v1.DeletePropagationForeground
-		deleteOptions.PropagationPolicy = &propagationPolicy
-	case "background":
-		propagationPolicy := meta_v1.DeletePropagationBackground
-		deleteOptions.PropagationPolicy = &propagationPolicy
-	case "orphan":
-		propagationPolicy := meta_v1.DeletePropagationOrphan
-		deleteOptions.PropagationPolicy = &propagationPolicy
-	default:
-		// Default to background
-		propagationPolicy := meta_v1.DeletePropagationBackground
-		deleteOptions.PropagationPolicy = &propagationPolicy
-	}
-
-	// Delete the resource
-	err = restClient.ResourceInterface.Delete(ctx, manifest.GetName(), deleteOptions)
+	client, err := r.providerData.getDynamicClient()
 	if err != nil {
-		if util.IsNotFoundError(err) {
-			// Resource already deleted, not an error
-			log.Printf("[INFO] %v resource already deleted", manifest)
+		log.Printf("[WARN] Cannot poll deletion status: %v", err)
+		return nil
+	}
+	rmapping, err := rm.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		log.Printf("[WARN] Cannot poll deletion status: %v", err)
+		return nil
+	}
+
+	var rs dynamic.ResourceInterface
+	rcl := client.Resource(rmapping.Resource)
+	if namespace != "" {
+		rs = rcl.Namespace(namespace)
+	} else {
+		rs = rcl
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			log.Printf("[WARN] Timeout waiting for deletion, but delete was initiated")
 			return nil
-		}
-		return fmt.Errorf("%v failed to delete resource: %w", manifest, err)
-	}
-
-	log.Printf("[INFO] %v resource deleted successfully", manifest)
-
-	// Wait for deletion if wait is enabled (default true for safety with finalizers)
-	// This ensures resources with finalizers are fully deleted before returning
-	waitForDeletion := true
-	if !model.Wait.IsNull() {
-		waitForDeletion = model.Wait.ValueBool()
-	}
-
-	if waitForDeletion {
-		// Get timeout for deletion (default 5 minutes)
-		deleteTimeout, diags := model.Timeouts.Delete(ctx, 5*time.Minute)
-		if diags.HasError() {
-			// Don't fail on timeout parse error, deletion already initiated
-			log.Printf("[WARN] Could not parse delete timeout, using 5 minute default")
-			deleteTimeout = 5 * time.Minute
-		}
-
-		timeoutCtx, cancel := context.WithTimeout(ctx, deleteTimeout)
-		defer cancel()
-
-		log.Printf(
-			"[DEBUG] Waiting for %v to be fully deleted (timeout: %v)",
-			manifest,
-			deleteTimeout,
-		)
-
-		// Poll until resource is NotFound
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-timeoutCtx.Done():
-				log.Printf(
-					"[WARN] Timeout waiting for %v deletion, but delete was initiated",
-					manifest,
-				)
-				return nil // Don't fail, deletion was initiated
-			case <-ticker.C:
-				_, err := restClient.ResourceInterface.Get(
-					ctx,
-					manifest.GetName(),
-					meta_v1.GetOptions{},
-				)
-				if util.IsNotFoundError(err) {
-					log.Printf("[INFO] %v confirmed deleted", manifest)
-					return nil
-				}
-				if err != nil {
-					log.Printf("[DEBUG] Error checking deletion status: %v", err)
-				}
-				log.Printf("[TRACE] %v still exists, waiting for deletion...", manifest)
+		case <-ticker.C:
+			_, err := rs.Get(ctx, name, meta_v1.GetOptions{})
+			if isNotFoundError(err) {
+				log.Printf("[INFO] Confirmed deleted: %s/%s", kind, name)
+				return nil
+			}
+			if err != nil {
+				log.Printf("[DEBUG] Error checking deletion status: %v", err)
 			}
 		}
 	}
-
-	return nil
-}
-
-func (r *manifestResource) obfuscateSensitiveFields(
-	ctx context.Context,
-	manifest *yaml.Manifest,
-	sensitiveFields types.List,
-) (*yaml.Manifest, error) {
-	// TODO: Implement sensitive field obfuscation
-	// - Extract sensitive field paths
-	// - Replace values with "(sensitive value)"
-	return manifest, nil
 }
 
 func isNotFoundError(err error) bool {
 	return util.IsNotFoundError(err)
-}
-
-// Attribute types for nested blocks
-
-var waitForAttrTypes = map[string]attr.Type{
-	"condition": types.ListType{
-		ElemType: types.ObjectType{
-			AttrTypes: map[string]attr.Type{
-				"type":   types.StringType,
-				"status": types.StringType,
-			},
-		},
-	},
-	"field": types.ListType{
-		ElemType: types.ObjectType{
-			AttrTypes: map[string]attr.Type{
-				"key":        types.StringType,
-				"value":      types.StringType,
-				"value_type": types.StringType,
-			},
-		},
-	},
-}
-
-// Helper methods for waiting on resource rollouts
-
-func (r *manifestResource) waitForDeployment(
-	ctx context.Context,
-	namespace string,
-	name string,
-	timeout time.Duration,
-) error {
-	// Borrowed from: https://github.com/kubernetes/kubectl/blob/c4be63c54b7188502c1a63bb884a0b05fac51ebd/pkg/polymorphichelpers/rollout_status.go#L70
-
-	timeoutSeconds := int64(timeout.Seconds())
-
-	watcher, err := r.providerData.MainClientset.AppsV1().Deployments(namespace).Watch(
-		ctx,
-		meta_v1.ListOptions{
-			Watch:          true,
-			TimeoutSeconds: &timeoutSeconds,
-			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	defer watcher.Stop()
-
-	done := false
-	for !done {
-		select {
-		case event := <-watcher.ResultChan():
-			if event.Type == watch.Modified {
-				deployment, ok := event.Object.(*apps_v1.Deployment)
-				if !ok {
-					return fmt.Errorf("%s could not cast to Deployment", name)
-				}
-
-				if deployment.Generation <= deployment.Status.ObservedGeneration {
-					// Check if replicas are ready
-					if deployment.Spec.Replicas != nil {
-						if deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
-							continue
-						}
-						if deployment.Status.Replicas > deployment.Status.UpdatedReplicas {
-							continue
-						}
-						if deployment.Status.AvailableReplicas < deployment.Status.UpdatedReplicas {
-							continue
-						}
-					}
-
-					done = true
-				}
-			}
-
-		case <-ctx.Done():
-			return fmt.Errorf("%s failed to rollout Deployment within timeout", name)
-		}
-	}
-
-	return nil
-}
-
-func (r *manifestResource) waitForStatefulSet(
-	ctx context.Context,
-	namespace string,
-	name string,
-	timeout time.Duration,
-) error {
-	// Borrowed from: https://github.com/kubernetes/kubectl/blob/c4be63c54b7188502c1a63bb884a0b05fac51ebd/pkg/polymorphichelpers/rollout_status.go#L120
-
-	timeoutSeconds := int64(timeout.Seconds())
-
-	watcher, err := r.providerData.MainClientset.AppsV1().StatefulSets(namespace).Watch(
-		ctx,
-		meta_v1.ListOptions{
-			Watch:          true,
-			TimeoutSeconds: &timeoutSeconds,
-			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	defer watcher.Stop()
-
-	done := false
-	for !done {
-		select {
-		case event := <-watcher.ResultChan():
-			if event.Type == watch.Modified {
-				sts, ok := event.Object.(*apps_v1.StatefulSet)
-				if !ok {
-					return fmt.Errorf("%s could not cast to StatefulSet", name)
-				}
-
-				if sts.Spec.UpdateStrategy.Type != apps_v1.RollingUpdateStatefulSetStrategyType {
-					done = true
-					continue
-				}
-
-				if sts.Status.ObservedGeneration == 0 ||
-					sts.Generation > sts.Status.ObservedGeneration {
-					continue
-				}
-
-				if sts.Spec.Replicas != nil && sts.Status.ReadyReplicas < *sts.Spec.Replicas {
-					continue
-				}
-
-				if sts.Spec.UpdateStrategy.Type == apps_v1.RollingUpdateStatefulSetStrategyType &&
-					sts.Spec.UpdateStrategy.RollingUpdate != nil {
-					if sts.Spec.Replicas != nil &&
-						sts.Spec.UpdateStrategy.RollingUpdate.Partition != nil {
-						if sts.Status.UpdatedReplicas < (*sts.Spec.Replicas - *sts.Spec.UpdateStrategy.RollingUpdate.Partition) {
-							continue
-						}
-					}
-
-					done = true
-					continue
-				}
-
-				if sts.Status.UpdateRevision != sts.Status.CurrentRevision {
-					continue
-				}
-
-				done = true
-			}
-
-		case <-ctx.Done():
-			return fmt.Errorf("%s failed to rollout StatefulSet within timeout", name)
-		}
-	}
-
-	return nil
-}
-
-func (r *manifestResource) waitForDaemonSet(
-	ctx context.Context,
-	namespace string,
-	name string,
-	timeout time.Duration,
-) error {
-	// Borrowed from: https://github.com/kubernetes/kubectl/blob/c4be63c54b7188502c1a63bb884a0b05fac51ebd/pkg/polymorphichelpers/rollout_status.go#L95
-
-	timeoutSeconds := int64(timeout.Seconds())
-
-	watcher, err := r.providerData.MainClientset.AppsV1().DaemonSets(namespace).Watch(
-		ctx,
-		meta_v1.ListOptions{
-			Watch:          true,
-			TimeoutSeconds: &timeoutSeconds,
-			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	defer watcher.Stop()
-
-	done := false
-	for !done {
-		select {
-		case event := <-watcher.ResultChan():
-			if event.Type == watch.Modified {
-				daemon, ok := event.Object.(*apps_v1.DaemonSet)
-				if !ok {
-					return fmt.Errorf("%s could not cast to DaemonSet", name)
-				}
-
-				if daemon.Spec.UpdateStrategy.Type != apps_v1.RollingUpdateDaemonSetStrategyType {
-					done = true
-					continue
-				}
-
-				if daemon.Generation <= daemon.Status.ObservedGeneration {
-					if daemon.Status.UpdatedNumberScheduled < daemon.Status.DesiredNumberScheduled {
-						continue
-					}
-
-					if daemon.Status.NumberAvailable < daemon.Status.DesiredNumberScheduled {
-						continue
-					}
-
-					done = true
-				}
-			}
-
-		case <-ctx.Done():
-			return fmt.Errorf("%s failed to rollout DaemonSet within timeout", name)
-		}
-	}
-
-	return nil
-}
-
-func (r *manifestResource) waitForConditions(
-	ctx context.Context,
-	restClient *util.RestClientResult,
-	conditions []waitConditionModel,
-	waitFields []waitFieldModel,
-	name string,
-	timeout time.Duration,
-) error {
-	timeoutSeconds := int64(timeout.Seconds())
-
-	watcher, err := restClient.ResourceInterface.Watch(
-		ctx,
-		meta_v1.ListOptions{
-			Watch:          true,
-			TimeoutSeconds: &timeoutSeconds,
-			FieldSelector:  fields.OneTermEqualSelector("metadata.name", name).String(),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	defer watcher.Stop()
-
-	done := false
-	for !done {
-		select {
-		case event := <-watcher.ResultChan():
-			log.Printf("[TRACE] Received event type %s for %s", event.Type, name)
-			if event.Type == watch.Modified || event.Type == watch.Added {
-				rawResponse, ok := event.Object.(*meta_v1_unstruct.Unstructured)
-				if !ok {
-					return fmt.Errorf("%s could not cast resource to unstructured", name)
-				}
-
-				totalConditions := len(conditions) + len(waitFields)
-				totalMatches := 0
-
-				yamlJson, err := rawResponse.MarshalJSON()
-				if err != nil {
-					return err
-				}
-
-				gq := gojsonq.New().FromString(string(yamlJson))
-
-				// Check conditions
-				for _, c := range conditions {
-					condType := c.Type.ValueString()
-					condStatus := c.Status.ValueString()
-
-					// Find the conditions by status and type
-					count := gq.Reset().From("status.conditions").
-						Where("type", "=", condType).
-						Where("status", "=", condStatus).Count()
-					if count == 0 {
-						log.Printf(
-							"[TRACE] Condition %s with status %s not found in %s",
-							condType,
-							condStatus,
-							name,
-						)
-						continue
-					}
-					log.Printf(
-						"[TRACE] Condition %s with status %s found in %s",
-						condType,
-						condStatus,
-						name,
-					)
-					totalMatches++
-				}
-
-				// Check fields
-				for _, f := range waitFields {
-					key := f.Key.ValueString()
-					value := f.Value.ValueString()
-					valueType := f.ValueType.ValueString()
-					if valueType == "" {
-						valueType = "eq"
-					}
-
-					// Find the key
-					v := gq.Reset().Find(key)
-					if v == nil {
-						log.Printf("[TRACE] Key %s not found in %s", key, name)
-						continue
-					}
-
-					// For the sake of comparison we will convert everything to a string
-					stringVal := fmt.Sprintf("%v", v)
-					switch valueType {
-					case "regex":
-						matched, err := regexp.Match(value, []byte(stringVal))
-						if err != nil {
-							return err
-						}
-
-						if !matched {
-							log.Printf(
-								"[TRACE] Value %s does not match regex %s in %s (key %s)",
-								stringVal,
-								value,
-								name,
-								key,
-							)
-							continue
-						}
-
-						log.Printf(
-							"[TRACE] Value %s matches regex %s in %s (key %s)",
-							stringVal,
-							value,
-							name,
-							key,
-						)
-						totalMatches++
-
-					case "eq":
-						if stringVal != value {
-							log.Printf(
-								"[TRACE] Value %s does not match %s in %s (key %s)",
-								stringVal,
-								value,
-								name,
-								key,
-							)
-							continue
-						}
-						log.Printf(
-							"[TRACE] Value %s matches %s in %s (key %s)",
-							stringVal,
-							value,
-							name,
-							key,
-						)
-						totalMatches++
-					}
-				}
-
-				if totalMatches == totalConditions {
-					log.Printf("[TRACE] All conditions met for %s", name)
-					done = true
-					continue
-				}
-				log.Printf(
-					"[TRACE] %d/%d conditions met for %s. Waiting for next event",
-					totalMatches,
-					totalConditions,
-					name,
-				)
-			}
-
-		case <-ctx.Done():
-			return fmt.Errorf("%s failed to wait for resource within timeout", name)
-		}
-	}
-
-	return nil
-}
-
-// generateFingerprints creates a fingerprint of the live manifest for drift detection
-// This is based on the SDK v2 implementation in kubernetes/resource_kubectl_manifest.go.
-func (r *manifestResource) generateFingerprints(
-	ctx context.Context,
-	userProvided *yaml.Manifest,
-	liveManifest *meta_v1_unstruct.Unstructured,
-	model *manifestResourceModel,
-) string {
-	// Extract ignore fields from model
-	var ignoreFields []string
-	if !model.IgnoreFields.IsNull() && !model.IgnoreFields.IsUnknown() {
-		model.IgnoreFields.ElementsAs(ctx, &ignoreFields, false)
-	}
-
-	// Handle Secret stringData special case
-	// If user provided stringData, convert it to base64-encoded data for comparison
-	if userProvided.GetKind() == "Secret" && userProvided.GetAPIVersion() == "v1" {
-		if stringData, found := userProvided.Raw.Object["stringData"]; found {
-			if stringDataMap, ok := stringData.(map[string]any); ok {
-				// Move all stringData values to data as base64
-				for k, v := range stringDataMap {
-					encodedString := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%v", v)))
-					meta_v1_unstruct.SetNestedField(
-						userProvided.Raw.Object,
-						encodedString,
-						"data",
-						k,
-					)
-				}
-				// Remove stringData field
-				meta_v1_unstruct.RemoveNestedField(userProvided.Raw.Object, "stringData")
-			}
-		}
-	}
-
-	// Flatten both manifests for comparison
-	flattenedUser := util.Flatten(userProvided.Raw.Object)
-	flattenedLive := util.Flatten(liveManifest.Object)
-
-	// Remove control fields and ignore fields
-	fieldsToTrim := append(kubernetesControlFields, ignoreFields...)
-	for _, field := range fieldsToTrim {
-		delete(flattenedUser, field)
-
-		// Remove any nested fields that start with this prefix
-		for k := range flattenedUser {
-			if strings.HasPrefix(k, field+".") {
-				delete(flattenedUser, k)
-			}
-		}
-	}
-
-	// Build fingerprint from user keys with live values
-	var userKeys []string
-	for userKey, userValue := range flattenedUser {
-		normalizedUserValue := strings.TrimSpace(userValue)
-
-		// Only include if key exists in live manifest
-		if _, exists := flattenedLive[userKey]; exists {
-			userKeys = append(userKeys, userKey)
-			normalizedLiveValue := strings.TrimSpace(flattenedLive[userKey])
-			if normalizedUserValue != normalizedLiveValue {
-				log.Printf("[TRACE] yaml drift detected in %s for %s, was: %s now: %s",
-					userProvided.GetSelfLink(), userKey, normalizedUserValue, normalizedLiveValue)
-			}
-			// Hash the live value
-			flattenedUser[userKey] = getFingerprint(normalizedLiveValue)
-		} else {
-			if normalizedUserValue != "" {
-				log.Printf("[TRACE] yaml drift detected in %s for %s, was %s now blank",
-					userProvided.GetSelfLink(), userKey, normalizedUserValue)
-			}
-		}
-	}
-
-	// Sort keys for consistent fingerprint
-	sort.Strings(userKeys)
-	var returnedValues []string
-	for _, k := range userKeys {
-		returnedValues = append(returnedValues, fmt.Sprintf("%s=%s", k, flattenedUser[k]))
-	}
-
-	return strings.Join(returnedValues, "\n")
-}
-
-// getFingerprint generates a SHA256 hash of a string.
-func getFingerprint(s string) string {
-	fingerprint := sha256.New()
-	fingerprint.Write([]byte(s))
-	return fmt.Sprintf("%x", fingerprint.Sum(nil))
-}
-
-// kubernetesControlFields are fields managed by Kubernetes that should be ignored in drift detection.
-var kubernetesControlFields = []string{
-	"status",
-	"metadata.finalizers",
-	"metadata.initializers",
-	"metadata.ownerReferences",
-	"metadata.creationTimestamp",
-	"metadata.generation",
-	"metadata.resourceVersion",
-	"metadata.uid",
-	"metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-	"metadata.managedFields",
 }

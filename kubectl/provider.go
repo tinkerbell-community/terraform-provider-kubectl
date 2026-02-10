@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/alekc/terraform-provider-kubectl/kubectl/functions"
+	"github.com/alekc/terraform-provider-kubectl/kubectl/openapi"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -18,9 +20,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/mitchellh/go-homedir"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sresource "k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/discovery"
 	diskcached "k8s.io/client-go/discovery/cached/disk"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
@@ -42,6 +46,15 @@ type kubectlProviderData struct {
 	RestConfig          *restclient.Config
 	AggregatorClientset *aggregator.Clientset
 	ApplyRetryCount     int64
+
+	// Cached clients for OpenAPI-aware operations
+	logger          hclog.Logger
+	dynamicClient   cache[dynamic.Interface]
+	discoveryClient cache[discovery.DiscoveryInterface]
+	restMapper      cache[meta.RESTMapper]
+	restClient      cache[restclient.Interface]
+	OAPIFoundry     cache[openapi.Foundry]
+	crds            cache[[]unstructured.Unstructured]
 }
 
 // Implement k8sresource.RESTClientGetter interface for kubectlProviderData.
@@ -445,6 +458,7 @@ func (p *kubectlProvider) Configure(
 		RestConfig:          cfg,
 		AggregatorClientset: aggClient,
 		ApplyRetryCount:     applyRetryCount,
+		logger:              hclog.Default(),
 	}
 
 	// Make provider data available to resources and data sources

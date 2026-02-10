@@ -39,7 +39,7 @@ func (r *manifestResource) applyManifestV2(
 	// Get field manager configuration
 	fieldManagerName := "Terraform"
 	forceConflicts := false
-	
+
 	if !model.FieldManager.IsNull() {
 		var fmModels []fieldManagerModel
 		diags := model.FieldManager.ElementsAs(ctx, &fmModels, false)
@@ -94,7 +94,7 @@ func (r *manifestResource) applyManifestV2(
 		return fmt.Errorf("failed to apply manifest: %w", err)
 	}
 
-	log.Printf("[DEBUG] Successfully applied resource: %s/%s (UID: %s)", 
+	log.Printf("[DEBUG] Successfully applied resource: %s/%s (UID: %s)",
 		result.GetKind(), result.GetName(), result.GetUID())
 
 	return nil
@@ -113,7 +113,7 @@ func (r *manifestResource) readManifestV2(
 
 	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
 
-	log.Printf("[DEBUG] Reading Kubernetes resource: %s/%s (namespace: %s)", 
+	log.Printf("[DEBUG] Reading Kubernetes resource: %s/%s (namespace: %s)",
 		model.Kind.ValueString(), name, namespace)
 
 	// Create REST client
@@ -147,40 +147,14 @@ func (r *manifestResource) readManifestV2(
 		return err
 	}
 
-	log.Printf("[DEBUG] Successfully read resource: %s/%s (UID: %s)", 
+	log.Printf("[DEBUG] Successfully read resource: %s/%s (UID: %s)",
 		result.GetKind(), result.GetName(), result.GetUID())
 
 	// Populate state from the resource
-	diags := setStateFromUnstructured(ctx, result, &manifestResourceModelV2{
-		ID:             model.ID,
-		APIVersion:     model.APIVersion,
-		Kind:           model.Kind,
-		Metadata:       model.Metadata,
-		Spec:           model.Spec,
-		Status:         model.Status,
-		Object:         model.Object,
-		ComputedFields: model.ComputedFields,
-		ApplyOnly:      model.ApplyOnly,
-		DeleteCascade:  model.DeleteCascade,
-	})
+	diags := setStateFromUnstructured(ctx, result, model)
 	if diags.HasError() {
 		return fmt.Errorf("failed to set state: %v", diags)
 	}
-
-	// Copy back to model
-	tempModel := &manifestResourceModelV2{}
-	diags = setStateFromUnstructured(ctx, result, tempModel)
-	if diags.HasError() {
-		return fmt.Errorf("failed to set state: %v", diags)
-	}
-
-	model.ID = tempModel.ID
-	model.APIVersion = tempModel.APIVersion
-	model.Kind = tempModel.Kind
-	model.Metadata = tempModel.Metadata
-	model.Spec = tempModel.Spec
-	model.Status = tempModel.Status
-	model.Object = tempModel.Object
 
 	return nil
 }
@@ -198,7 +172,7 @@ func (r *manifestResource) deleteManifestV2(
 
 	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
 
-	log.Printf("[DEBUG] Deleting Kubernetes resource: %s/%s (namespace: %s)", 
+	log.Printf("[DEBUG] Deleting Kubernetes resource: %s/%s (namespace: %s)",
 		model.Kind.ValueString(), name, namespace)
 
 	// Build minimal unstructured for REST client

@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-// ValidateResourceConfig function
+// ValidateResourceConfig function.
 func (s *RawProviderServer) ValidateResourceConfig(
 	ctx context.Context,
 	req *tfprotov6.ValidateResourceConfigRequest,
@@ -255,8 +255,11 @@ func (s *RawProviderServer) validateResourceOnline(
 			diags = append(diags,
 				&tfprotov6.Diagnostic{
 					Severity: tfprotov6.DiagnosticSeverityError,
-					Detail:   fmt.Sprintf("Resources of type '%s' cannot have a namespace", gvk.String()),
-					Summary:  "Cluster level resource cannot take namespace",
+					Detail: fmt.Sprintf(
+						"Resources of type '%s' cannot have a namespace",
+						gvk.String(),
+					),
+					Summary: "Cluster level resource cannot take namespace",
 				})
 		}
 	}

@@ -16,18 +16,17 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
-	// this is how client-go expects auth plugins to be loaded
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 )
 
-// keys into the global state storage
+// keys into the global state storage.
 const (
 	OAPIFoundry string = "OPENAPIFOUNDRY"
 )
 
-// getDynamicClient returns a configured unstructured (dynamic) client instance
+// getDynamicClient returns a configured unstructured (dynamic) client instance.
 func (ps *RawProviderServer) getDynamicClient() (dynamic.Interface, error) {
 	if ps.clientConfig == nil {
 		return nil, fmt.Errorf("cannot create dynamic client: no client config")
@@ -49,7 +48,7 @@ func (ps *RawProviderServer) getDiscoveryClient() (discovery.DiscoveryInterface,
 	})
 }
 
-// getRestMapper returns a RESTMapper client instance
+// getRestMapper returns a RESTMapper client instance.
 func (ps *RawProviderServer) getRestMapper() (meta.RESTMapper, error) {
 	return ps.restMapper.Get(func() (meta.RESTMapper, error) {
 		dc, err := ps.getDiscoveryClient()
@@ -62,7 +61,7 @@ func (ps *RawProviderServer) getRestMapper() (meta.RESTMapper, error) {
 	})
 }
 
-// getRestClient returns a raw REST client instance
+// getRestClient returns a raw REST client instance.
 func (ps *RawProviderServer) getRestClient() (rest.Interface, error) {
 	if ps.clientConfig == nil {
 		return nil, fmt.Errorf("cannot create REST client: no client config")
@@ -73,7 +72,7 @@ func (ps *RawProviderServer) getRestClient() (rest.Interface, error) {
 	})
 }
 
-// getOAPIv2Foundry returns an interface to request tftype types from an OpenAPIv2 spec
+// getOAPIv2Foundry returns an interface to request tftype types from an OpenAPIv2 spec.
 func (ps *RawProviderServer) getOAPIv2Foundry() (openapi.Foundry, error) {
 	return ps.OAPIFoundry.Get(func() (openapi.Foundry, error) {
 		rc, err := ps.getRestClient()

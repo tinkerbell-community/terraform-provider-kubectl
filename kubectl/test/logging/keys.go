@@ -15,17 +15,17 @@ const (
 	// as parent.0.child in this project.
 	KeyAttributePath = "tf_attribute_path"
 
-	// The type of data source being operated on, such as "archive_file"
+	// The type of data source being operated on, such as "archive_file".
 	KeyDataSourceType = "tf_data_source_type"
 
 	// Underlying Go error string when logging an error.
 	KeyError = "error"
 
 	// The full address of the provider, such as
-	// registry.terraform.io/hashicorp/random
+	// registry.terraform.io/hashicorp/random.
 	KeyProviderAddress = "tf_provider_addr"
 
-	// The type of resource being operated on, such as "random_pet"
+	// The type of resource being operated on, such as "random_pet".
 	KeyResourceType = "tf_resource_type"
 
 	// The name of the test being executed.

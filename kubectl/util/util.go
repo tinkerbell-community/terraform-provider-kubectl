@@ -20,7 +20,7 @@ import (
 // "apiVersion=<value>,kind=<value>,name=<value>[,namespace=<value>"]
 //
 // where 'namespace' is only required for resources that expect a namespace.
-// Example: "apiVersion=v1,kind=Secret,namespace=default,name=default-token-qgm6s"
+// Example: "apiVersion=v1,kind=Secret,namespace=default,name=default-token-qgm6s".
 func ParseResourceID(id string) (schema.GroupVersionKind, string, string, error) {
 	parts := strings.Split(id, ",")
 	if len(parts) < 3 || len(parts) > 4 {

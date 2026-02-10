@@ -681,14 +681,14 @@ func TestMorphValueToType(t *testing.T) {
 			},
 			Out: tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		},
-		"number(unkown value)->number": {
+		"number(unknown value)->number": {
 			In: sampleInType{
 				V: tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 				T: tftypes.Number,
 			},
 			Out: tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		},
-		"bool(unkown value)->bool": {
+		"bool(unknown value)->bool": {
 			In: sampleInType{
 				V: tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 				T: tftypes.Bool,
@@ -697,28 +697,28 @@ func TestMorphValueToType(t *testing.T) {
 		},
 
 		// Translations that won't work without the values.
-		"number(unkown value)->string": {
+		"number(unknown value)->string": {
 			In: sampleInType{
 				V: tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 				T: tftypes.String,
 			},
 			WantErr: true,
 		},
-		"string(unkown value)->number": {
+		"string(unknown value)->number": {
 			In: sampleInType{
 				V: tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 				T: tftypes.Number,
 			},
 			WantErr: true,
 		},
-		"bool(unkown value)->string": {
+		"bool(unknown value)->string": {
 			In: sampleInType{
 				V: tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 				T: tftypes.String,
 			},
 			WantErr: true,
 		},
-		"string(unkown value)->bool": {
+		"string(unknown value)->bool": {
 			In: sampleInType{
 				V: tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 				T: tftypes.Bool,
