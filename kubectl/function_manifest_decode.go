@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package functions
+package kubectl
 
 import (
 	"context"
@@ -40,6 +40,10 @@ func (f ManifestDecodeFunction) Definition(
 				MarkdownDescription: "The YAML text for a Kubernetes manifest",
 			},
 		},
+		VariadicParameter: function.BoolParameter{
+			Name:                "validate",
+			MarkdownDescription: "Whether to validate the manifest has required Kubernetes fields (apiVersion, kind, metadata). Defaults to true.",
+		},
 		Return: function.DynamicReturn{},
 	}
 }
@@ -50,13 +54,19 @@ func (f ManifestDecodeFunction) Run(
 	resp *function.RunResponse,
 ) {
 	var manifest string
+	var validateArgs []bool
 
-	resp.Error = req.Arguments.Get(ctx, &manifest)
+	resp.Error = req.Arguments.Get(ctx, &manifest, &validateArgs)
 	if resp.Error != nil {
 		return
 	}
 
-	tv, diags := decode(ctx, manifest)
+	validate := true
+	if len(validateArgs) > 0 {
+		validate = validateArgs[0]
+	}
+
+	tv, diags := decodeManifestYAML(ctx, manifest, validate)
 	if diags.HasError() {
 		resp.Error = function.FuncErrorFromDiags(ctx, diags)
 		return

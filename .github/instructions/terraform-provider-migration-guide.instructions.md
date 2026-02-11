@@ -596,7 +596,7 @@ import (
     "github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
     "github.com/hashicorp/terraform-plugin-framework/types"
     
-    "github.com/alekc/terraform-provider-kubectl/yaml"
+    "github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces
@@ -1069,7 +1069,7 @@ import (
     "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
     "github.com/hashicorp/terraform-plugin-framework/types"
     
-    "github.com/alekc/terraform-provider-kubectl/yaml"
+    "github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/functions"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -485,8 +484,8 @@ func (p *kubectlProvider) DataSources(ctx context.Context) []func() datasource.D
 // Functions returns the provider-defined functions implemented by this provider.
 func (p *kubectlProvider) Functions(ctx context.Context) []func() function.Function {
 	return []func() function.Function{
-		functions.NewManifestDecodeFunction,
-		functions.NewManifestDecodeMultiFunction,
-		functions.NewManifestEncodeFunction,
+		NewManifestDecodeFunction,
+		NewManifestDecodeMultiFunction,
+		NewManifestEncodeFunction,
 	}
 }
