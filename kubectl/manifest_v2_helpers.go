@@ -12,58 +12,35 @@ import (
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// buildUnstructured converts the new schema attributes (api_version, kind, metadata, spec)
+// buildUnstructured converts the model's manifest Dynamic attribute
 // into a Kubernetes unstructured object.
-// This is the core function that replaces yaml.ParseYAML() for the new schema.
 func buildUnstructured(
 	ctx context.Context,
-	apiVersion, kind string,
-	metadata, spec types.Dynamic,
+	model *manifestResourceModel,
 ) (*meta_v1_unstruct.Unstructured, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	// Start with base structure
-	obj := map[string]any{
-		"apiVersion": apiVersion,
-		"kind":       kind,
-	}
-
-	// Convert metadata (Required)
-	metadataMap, d := dynamicToMap(ctx, metadata)
+	manifestMap, d := dynamicToMap(ctx, model.Manifest)
 	diags.Append(d...)
 	if diags.HasError() {
 		return nil, diags
 	}
-	if metadataMap == nil {
+	if manifestMap == nil {
 		diags.AddError(
-			"Invalid metadata",
-			"metadata is required and cannot be null",
+			"Invalid manifest",
+			"manifest is required and cannot be null",
 		)
 		return nil, diags
 	}
-	obj["metadata"] = metadataMap
 
-	// Convert spec (Optional)
-	if !spec.IsNull() && !spec.IsUnknown() {
-		specMap, d := dynamicToMap(ctx, spec)
-		diags.Append(d...)
-		if diags.HasError() {
-			return nil, diags
-		}
-		if specMap != nil {
-			obj["spec"] = specMap
-		}
-	}
-
-	// Create unstructured object
 	uo := &meta_v1_unstruct.Unstructured{}
-	uo.SetUnstructuredContent(obj)
+	uo.SetUnstructuredContent(manifestMap)
 
 	return uo, diags
 }
 
 // setStateFromUnstructured populates the state model from a Kubernetes unstructured object.
-// This is the core function that replaces the current readManifest() logic for the new schema.
+// It sets model.Manifest (without status), model.Status, model.Object, and model.ID.
 func setStateFromUnstructured(
 	ctx context.Context,
 	uo *meta_v1_unstruct.Unstructured,
@@ -73,57 +50,37 @@ func setStateFromUnstructured(
 
 	content := uo.UnstructuredContent()
 
-	// Set api_version and kind (always present)
-	model.APIVersion = types.StringValue(uo.GetAPIVersion())
-	model.Kind = types.StringValue(uo.GetKind())
-
-	// Set ID (computed)
-	namespace := uo.GetNamespace()
+	// Set ID to Kubernetes UID (or fallback)
 	name := uo.GetName()
-	if namespace != "" {
-		model.ID = types.StringValue(fmt.Sprintf(
-			"%s//%s//%s//%s",
-			uo.GetAPIVersion(),
-			uo.GetKind(),
-			name,
-			namespace,
-		))
+	namespace := uo.GetNamespace()
+	uid := string(uo.GetUID())
+	if uid != "" {
+		model.ID = types.StringValue(uid)
 	} else {
-		model.ID = types.StringValue(fmt.Sprintf(
-			"%s//%s//%s",
-			uo.GetAPIVersion(),
-			uo.GetKind(),
-			name,
-		))
+		if namespace != "" {
+			model.ID = types.StringValue(fmt.Sprintf(
+				"%s//%s//%s//%s",
+				uo.GetAPIVersion(), uo.GetKind(), name, namespace,
+			))
+		} else {
+			model.ID = types.StringValue(fmt.Sprintf(
+				"%s//%s//%s",
+				uo.GetAPIVersion(), uo.GetKind(), name,
+			))
+		}
 	}
 
-	// Convert metadata to Dynamic
-	if meta, ok := content["metadata"]; ok {
-		metaDynamic, d := mapToDynamic(ctx, meta.(map[string]any))
-		diags.Append(d...)
-		if !diags.HasError() {
-			model.Metadata = metaDynamic
+	// Build manifest from content (without status)
+	manifestContent := make(map[string]any)
+	for k, v := range content {
+		if k != "status" {
+			manifestContent[k] = v
 		}
-	} else {
-		diags.AddError(
-			"Missing metadata",
-			"Kubernetes resource must have metadata",
-		)
-		return diags
 	}
-
-	// Convert spec to Dynamic (optional)
-	if spec, ok := content["spec"]; ok {
-		if specMap, ok := spec.(map[string]any); ok {
-			specDynamic, d := mapToDynamic(ctx, specMap)
-			diags.Append(d...)
-			if !diags.HasError() {
-				model.Spec = specDynamic
-			}
-		}
-	} else {
-		// spec is optional - set to null if not present
-		model.Spec = types.DynamicNull()
+	manifestDynamic, d := mapToDynamic(ctx, manifestContent)
+	diags.Append(d...)
+	if !diags.HasError() {
+		model.Manifest = manifestDynamic
 	}
 
 	// Convert status to Dynamic (computed, optional)
@@ -136,7 +93,6 @@ func setStateFromUnstructured(
 			}
 		}
 	} else {
-		// status may not be present for all resources
 		model.Status = types.DynamicNull()
 	}
 
@@ -150,26 +106,54 @@ func setStateFromUnstructured(
 	return diags
 }
 
-// extractMetadataField safely extracts a field from the metadata Dynamic attribute.
-func extractMetadataField(
+// extractManifestField safely extracts a top-level field from the manifest Dynamic attribute.
+// Returns the raw value (any type) and an error.
+func extractManifestField(
 	ctx context.Context,
-	metadata types.Dynamic,
+	manifest types.Dynamic,
+	fieldName string,
+) (any, error) {
+	if manifest.IsNull() || manifest.IsUnknown() {
+		return nil, fmt.Errorf("manifest is null or unknown")
+	}
+
+	manifestMap, diags := dynamicToMap(ctx, manifest)
+	if diags.HasError() {
+		return nil, fmt.Errorf("failed to convert manifest: %v", diags)
+	}
+
+	if val, ok := manifestMap[fieldName]; ok {
+		return val, nil
+	}
+
+	return nil, nil // Field not present
+}
+
+// extractManifestMetadataField safely extracts a field from manifest.metadata.
+// Returns the string value and an error.
+func extractManifestMetadataField(
+	ctx context.Context,
+	manifest types.Dynamic,
 	fieldName string,
 ) (string, error) {
-	if metadata.IsNull() || metadata.IsUnknown() {
-		return "", fmt.Errorf("metadata is null or unknown")
+	metadataAny, err := extractManifestField(ctx, manifest, "metadata")
+	if err != nil {
+		return "", err
+	}
+	if metadataAny == nil {
+		return "", nil
 	}
 
-	metaMap, diags := dynamicToMap(ctx, metadata)
-	if diags.HasError() {
-		return "", fmt.Errorf("failed to convert metadata: %v", diags)
+	metadataMap, ok := metadataAny.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("manifest.metadata is not a map")
 	}
 
-	if val, ok := metaMap[fieldName]; ok {
+	if val, ok := metadataMap[fieldName]; ok {
 		if strVal, ok := val.(string); ok {
 			return strVal, nil
 		}
-		return "", fmt.Errorf("metadata.%s is not a string", fieldName)
+		return fmt.Sprintf("%v", val), nil
 	}
 
 	return "", nil // Field not present (may be optional)
@@ -177,3 +161,96 @@ func extractMetadataField(
 
 // manifestResourceModelV2 is now unified as manifestResourceModel - kept as alias for backward compatibility.
 type manifestResourceModelV2 = manifestResourceModel
+
+// reconcileDynamicWithPrior reconciles a Dynamic value from the API with a
+// prior Dynamic value (from state). It keeps only the attributes that existed
+// in the prior value, updated with current values from the API.
+// This prevents perpetual diffs caused by server-generated fields.
+// It recursively reconciles nested maps so that server-defaulted fields
+// at any depth are excluded (e.g., spec.template.spec.dnsPolicy).
+func reconcileDynamicWithPrior(
+	ctx context.Context,
+	prior types.Dynamic,
+	apiResult types.Dynamic,
+) types.Dynamic {
+	if prior.IsNull() || prior.IsUnknown() {
+		return prior
+	}
+	if apiResult.IsNull() || apiResult.IsUnknown() {
+		return prior
+	}
+
+	priorMap, d := dynamicToMap(ctx, prior)
+	if d.HasError() || priorMap == nil {
+		return prior
+	}
+	apiMap, d := dynamicToMap(ctx, apiResult)
+	if d.HasError() || apiMap == nil {
+		return prior
+	}
+
+	// Deep reconcile: keep only attributes from prior, recursing into nested maps
+	result := deepReconcileMaps(priorMap, apiMap)
+
+	dynResult, d := mapToDynamic(ctx, result)
+	if d.HasError() {
+		return prior
+	}
+	return dynResult
+}
+
+// deepReconcileMaps recursively reconciles two maps, keeping only keys from
+// the prior map but using values from the API map (which may have been updated).
+// For nested maps, it recurses to filter server-generated fields at all depths.
+// For arrays of maps, it reconciles each element by index.
+func deepReconcileMaps(prior, api map[string]any) map[string]any {
+	result := make(map[string]any, len(prior))
+	for k, priorVal := range prior {
+		apiVal, ok := api[k]
+		if !ok {
+			result[k] = priorVal
+			continue
+		}
+
+		// Recurse into nested maps
+		priorMap, priorIsMap := priorVal.(map[string]any)
+		apiMap, apiIsMap := apiVal.(map[string]any)
+		if priorIsMap && apiIsMap {
+			result[k] = deepReconcileMaps(priorMap, apiMap)
+			continue
+		}
+
+		// Recurse into arrays of maps (e.g., containers, volumes)
+		priorSlice, priorIsSlice := priorVal.([]any)
+		apiSlice, apiIsSlice := apiVal.([]any)
+		if priorIsSlice && apiIsSlice {
+			result[k] = deepReconcileSlices(priorSlice, apiSlice)
+			continue
+		}
+
+		// Scalar or type mismatch: use API value
+		result[k] = apiVal
+	}
+	return result
+}
+
+// deepReconcileSlices reconciles two slices element-by-element.
+// For elements that are maps, it reconciles them recursively.
+// If the API slice has fewer elements, keeps prior elements.
+func deepReconcileSlices(prior, api []any) []any {
+	result := make([]any, len(prior))
+	for i, priorElem := range prior {
+		if i >= len(api) {
+			result[i] = priorElem
+			continue
+		}
+		priorMap, priorIsMap := priorElem.(map[string]any)
+		apiMap, apiIsMap := api[i].(map[string]any)
+		if priorIsMap && apiIsMap {
+			result[i] = deepReconcileMaps(priorMap, apiMap)
+		} else {
+			result[i] = api[i]
+		}
+	}
+	return result
+}

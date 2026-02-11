@@ -13,33 +13,55 @@ import (
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// makeManifestDynamic builds a types.Dynamic value from a map of string->attr.Value.
+func makeManifestDynamic(attrTypes map[string]attr.Type, attrValues map[string]attr.Value) types.Dynamic {
+	return types.DynamicValue(types.ObjectValueMust(attrTypes, attrValues))
+}
+
 func TestBuildUnstructured(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
 		name        string
-		apiVersion  string
-		kind        string
-		metadata    types.Dynamic
-		spec        types.Dynamic
+		model       *manifestResourceModel
 		wantErr     bool
 		checkResult func(t *testing.T, uo *meta_v1_unstruct.Unstructured)
 	}{
 		{
-			name:       "simple ConfigMap",
-			apiVersion: "v1",
-			kind:       "ConfigMap",
-			metadata: types.DynamicValue(types.ObjectValueMust(
-				map[string]attr.Type{
-					"name":      types.StringType,
-					"namespace": types.StringType,
-				},
-				map[string]attr.Value{
-					"name":      types.StringValue("test-config"),
-					"namespace": types.StringValue("default"),
-				},
-			)),
-			spec:    types.DynamicNull(),
+			name: "simple ConfigMap with data",
+			model: &manifestResourceModel{
+				Manifest: makeManifestDynamic(
+					map[string]attr.Type{
+						"apiVersion": types.StringType,
+						"kind":       types.StringType,
+						"metadata": types.ObjectType{AttrTypes: map[string]attr.Type{
+							"name":      types.StringType,
+							"namespace": types.StringType,
+						}},
+						"data": types.ObjectType{AttrTypes: map[string]attr.Type{
+							"key1": types.StringType,
+						}},
+					},
+					map[string]attr.Value{
+						"apiVersion": types.StringValue("v1"),
+						"kind":       types.StringValue("ConfigMap"),
+						"metadata": types.ObjectValueMust(
+							map[string]attr.Type{
+								"name":      types.StringType,
+								"namespace": types.StringType,
+							},
+							map[string]attr.Value{
+								"name":      types.StringValue("test-config"),
+								"namespace": types.StringValue("default"),
+							},
+						),
+						"data": types.ObjectValueMust(
+							map[string]attr.Type{"key1": types.StringType},
+							map[string]attr.Value{"key1": types.StringValue("value1")},
+						),
+					},
+				),
+			},
 			wantErr: false,
 			checkResult: func(t *testing.T, uo *meta_v1_unstruct.Unstructured) {
 				if uo.GetAPIVersion() != "v1" {
@@ -51,33 +73,55 @@ func TestBuildUnstructured(t *testing.T) {
 				if uo.GetName() != "test-config" {
 					t.Errorf("Expected name=test-config, got %s", uo.GetName())
 				}
-				if uo.GetNamespace() != "default" {
-					t.Errorf("Expected namespace=default, got %s", uo.GetNamespace())
+				content := uo.UnstructuredContent()
+				if data, ok := content["data"]; ok {
+					dataMap := data.(map[string]any)
+					if dataMap["key1"] != "value1" {
+						t.Errorf("Expected data.key1=value1, got %v", dataMap["key1"])
+					}
+				} else {
+					t.Error("Expected data to be present")
+				}
+				if _, ok := content["spec"]; ok {
+					t.Error("Expected spec to NOT be present for ConfigMap")
 				}
 			},
 		},
 		{
-			name:       "Deployment with spec",
-			apiVersion: "apps/v1",
-			kind:       "Deployment",
-			metadata: types.DynamicValue(types.ObjectValueMust(
-				map[string]attr.Type{
-					"name":      types.StringType,
-					"namespace": types.StringType,
-				},
-				map[string]attr.Value{
-					"name":      types.StringValue("nginx"),
-					"namespace": types.StringValue("default"),
-				},
-			)),
-			spec: types.DynamicValue(types.ObjectValueMust(
-				map[string]attr.Type{
-					"replicas": types.NumberType,
-				},
-				map[string]attr.Value{
-					"replicas": types.NumberValue(mustNewBigFloat(3)),
-				},
-			)),
+			name: "Deployment with spec",
+			model: &manifestResourceModel{
+				Manifest: makeManifestDynamic(
+					map[string]attr.Type{
+						"apiVersion": types.StringType,
+						"kind":       types.StringType,
+						"metadata": types.ObjectType{AttrTypes: map[string]attr.Type{
+							"name":      types.StringType,
+							"namespace": types.StringType,
+						}},
+						"spec": types.ObjectType{AttrTypes: map[string]attr.Type{
+							"replicas": types.NumberType,
+						}},
+					},
+					map[string]attr.Value{
+						"apiVersion": types.StringValue("apps/v1"),
+						"kind":       types.StringValue("Deployment"),
+						"metadata": types.ObjectValueMust(
+							map[string]attr.Type{
+								"name":      types.StringType,
+								"namespace": types.StringType,
+							},
+							map[string]attr.Value{
+								"name":      types.StringValue("nginx"),
+								"namespace": types.StringValue("default"),
+							},
+						),
+						"spec": types.ObjectValueMust(
+							map[string]attr.Type{"replicas": types.NumberType},
+							map[string]attr.Value{"replicas": types.NumberValue(mustNewBigFloat(3))},
+						),
+					},
+				),
+			},
 			wantErr: false,
 			checkResult: func(t *testing.T, uo *meta_v1_unstruct.Unstructured) {
 				content := uo.UnstructuredContent()
@@ -94,11 +138,10 @@ func TestBuildUnstructured(t *testing.T) {
 			},
 		},
 		{
-			name:        "null metadata should error",
-			apiVersion:  "v1",
-			kind:        "ConfigMap",
-			metadata:    types.DynamicNull(),
-			spec:        types.DynamicNull(),
+			name: "null manifest should error",
+			model: &manifestResourceModel{
+				Manifest: types.DynamicNull(),
+			},
 			wantErr:     true,
 			checkResult: nil,
 		},
@@ -106,7 +149,7 @@ func TestBuildUnstructured(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			uo, diags := buildUnstructured(ctx, tt.apiVersion, tt.kind, tt.metadata, tt.spec)
+			uo, diags := buildUnstructured(ctx, tt.model)
 			if (diags.HasError()) != tt.wantErr {
 				t.Errorf("buildUnstructured() error = %v, wantErr %v", diags, tt.wantErr)
 				return
@@ -144,23 +187,28 @@ func TestSetStateFromUnstructured(t *testing.T) {
 			},
 			wantErr: false,
 			check: func(t *testing.T, model *manifestResourceModelV2) {
-				if model.APIVersion.ValueString() != "v1" {
-					t.Errorf("Expected APIVersion=v1, got %s", model.APIVersion.ValueString())
-				}
-				if model.Kind.ValueString() != "ConfigMap" {
-					t.Errorf("Expected Kind=ConfigMap, got %s", model.Kind.ValueString())
-				}
 				if model.ID.ValueString() != "v1//ConfigMap//test-config//default" {
 					t.Errorf(
 						"Expected ID=v1//ConfigMap//test-config//default, got %s",
 						model.ID.ValueString(),
 					)
 				}
-				if model.Metadata.IsNull() {
-					t.Error("Expected Metadata to be populated")
+				if model.Manifest.IsNull() {
+					t.Error("Expected Manifest to be populated")
 				}
-				if !model.Spec.IsNull() {
-					t.Error("Expected Spec to be null (ConfigMap doesn't have spec)")
+				// Verify manifest contains apiVersion, kind, metadata, data but not status
+				manifestMap, d := dynamicToMap(ctx, model.Manifest)
+				if d.HasError() {
+					t.Fatalf("Failed to convert manifest: %v", d)
+				}
+				if manifestMap["apiVersion"] != "v1" {
+					t.Errorf("Expected manifest.apiVersion=v1, got %v", manifestMap["apiVersion"])
+				}
+				if manifestMap["kind"] != "ConfigMap" {
+					t.Errorf("Expected manifest.kind=ConfigMap, got %v", manifestMap["kind"])
+				}
+				if _, ok := manifestMap["status"]; ok {
+					t.Error("Expected manifest to NOT contain status")
 				}
 				if model.Object.IsNull() {
 					t.Error("Expected Object to be populated")
@@ -187,9 +235,18 @@ func TestSetStateFromUnstructured(t *testing.T) {
 			},
 			wantErr: false,
 			check: func(t *testing.T, model *manifestResourceModelV2) {
-				if model.Spec.IsNull() {
-					t.Error("Expected Spec to be populated")
+				// Manifest should have spec but not status
+				manifestMap, d := dynamicToMap(ctx, model.Manifest)
+				if d.HasError() {
+					t.Fatalf("Failed to convert manifest: %v", d)
 				}
+				if _, ok := manifestMap["spec"]; !ok {
+					t.Error("Expected manifest to contain spec")
+				}
+				if _, ok := manifestMap["status"]; ok {
+					t.Error("Expected manifest to NOT contain status")
+				}
+				// Status should be set separately
 				if model.Status.IsNull() {
 					t.Error("Expected Status to be populated")
 				}
@@ -231,65 +288,144 @@ func TestSetStateFromUnstructured(t *testing.T) {
 	}
 }
 
-func TestExtractMetadataField(t *testing.T) {
+func TestExtractManifestField(t *testing.T) {
 	ctx := context.Background()
+
+	manifest := makeManifestDynamic(
+		map[string]attr.Type{
+			"apiVersion": types.StringType,
+			"kind":       types.StringType,
+			"metadata": types.ObjectType{AttrTypes: map[string]attr.Type{
+				"name":      types.StringType,
+				"namespace": types.StringType,
+			}},
+		},
+		map[string]attr.Value{
+			"apiVersion": types.StringValue("v1"),
+			"kind":       types.StringValue("ConfigMap"),
+			"metadata": types.ObjectValueMust(
+				map[string]attr.Type{
+					"name":      types.StringType,
+					"namespace": types.StringType,
+				},
+				map[string]attr.Value{
+					"name":      types.StringValue("test"),
+					"namespace": types.StringValue("default"),
+				},
+			),
+		},
+	)
 
 	tests := []struct {
 		name      string
-		metadata  types.Dynamic
+		manifest  types.Dynamic
+		fieldName string
+		want      any
+		wantErr   bool
+	}{
+		{
+			name:      "extract apiVersion",
+			manifest:  manifest,
+			fieldName: "apiVersion",
+			want:      "v1",
+			wantErr:   false,
+		},
+		{
+			name:      "extract kind",
+			manifest:  manifest,
+			fieldName: "kind",
+			want:      "ConfigMap",
+			wantErr:   false,
+		},
+		{
+			name:      "field not present",
+			manifest:  manifest,
+			fieldName: "spec",
+			want:      nil,
+			wantErr:   false,
+		},
+		{
+			name:      "null manifest",
+			manifest:  types.DynamicNull(),
+			fieldName: "apiVersion",
+			want:      nil,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractManifestField(ctx, tt.manifest, tt.fieldName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("extractManifestField() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("extractManifestField() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractManifestMetadataField(t *testing.T) {
+	ctx := context.Background()
+
+	manifest := makeManifestDynamic(
+		map[string]attr.Type{
+			"apiVersion": types.StringType,
+			"kind":       types.StringType,
+			"metadata": types.ObjectType{AttrTypes: map[string]attr.Type{
+				"name":      types.StringType,
+				"namespace": types.StringType,
+			}},
+		},
+		map[string]attr.Value{
+			"apiVersion": types.StringValue("v1"),
+			"kind":       types.StringValue("ConfigMap"),
+			"metadata": types.ObjectValueMust(
+				map[string]attr.Type{
+					"name":      types.StringType,
+					"namespace": types.StringType,
+				},
+				map[string]attr.Value{
+					"name":      types.StringValue("test"),
+					"namespace": types.StringValue("default"),
+				},
+			),
+		},
+	)
+
+	tests := []struct {
+		name      string
+		manifest  types.Dynamic
 		fieldName string
 		want      string
 		wantErr   bool
 	}{
 		{
-			name: "extract name",
-			metadata: types.DynamicValue(types.ObjectValueMust(
-				map[string]attr.Type{
-					"name":      types.StringType,
-					"namespace": types.StringType,
-				},
-				map[string]attr.Value{
-					"name":      types.StringValue("test"),
-					"namespace": types.StringValue("default"),
-				},
-			)),
+			name:      "extract name",
+			manifest:  manifest,
 			fieldName: "name",
 			want:      "test",
 			wantErr:   false,
 		},
 		{
-			name: "extract namespace",
-			metadata: types.DynamicValue(types.ObjectValueMust(
-				map[string]attr.Type{
-					"name":      types.StringType,
-					"namespace": types.StringType,
-				},
-				map[string]attr.Value{
-					"name":      types.StringValue("test"),
-					"namespace": types.StringValue("default"),
-				},
-			)),
+			name:      "extract namespace",
+			manifest:  manifest,
 			fieldName: "namespace",
 			want:      "default",
 			wantErr:   false,
 		},
 		{
-			name: "field not present",
-			metadata: types.DynamicValue(types.ObjectValueMust(
-				map[string]attr.Type{
-					"name": types.StringType,
-				},
-				map[string]attr.Value{
-					"name": types.StringValue("test"),
-				},
-			)),
-			fieldName: "namespace",
+			name:      "field not present",
+			manifest:  manifest,
+			fieldName: "labels",
 			want:      "",
 			wantErr:   false,
 		},
 		{
-			name:      "null metadata",
-			metadata:  types.DynamicNull(),
+			name:      "null manifest",
+			manifest:  types.DynamicNull(),
 			fieldName: "name",
 			want:      "",
 			wantErr:   true,
@@ -298,13 +434,13 @@ func TestExtractMetadataField(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := extractMetadataField(ctx, tt.metadata, tt.fieldName)
+			got, err := extractManifestMetadataField(ctx, tt.manifest, tt.fieldName)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("extractMetadataField() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("extractManifestMetadataField() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("extractMetadataField() = %v, want %v", got, tt.want)
+				t.Errorf("extractManifestMetadataField() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -314,67 +450,89 @@ func TestRoundTripUnstructured(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a complex Deployment manifest
-	metadata := types.DynamicValue(types.ObjectValueMust(
-		map[string]attr.Type{
-			"name":      types.StringType,
-			"namespace": types.StringType,
-			"labels": types.ObjectType{
-				AttrTypes: map[string]attr.Type{
-					"app": types.StringType,
-				},
+	model := &manifestResourceModel{
+		Manifest: makeManifestDynamic(
+			map[string]attr.Type{
+				"apiVersion": types.StringType,
+				"kind":       types.StringType,
+				"metadata": types.ObjectType{AttrTypes: map[string]attr.Type{
+					"name":      types.StringType,
+					"namespace": types.StringType,
+					"labels": types.ObjectType{AttrTypes: map[string]attr.Type{
+						"app": types.StringType,
+					}},
+				}},
+				"spec": types.ObjectType{AttrTypes: map[string]attr.Type{
+					"replicas": types.NumberType,
+				}},
 			},
-		},
-		map[string]attr.Value{
-			"name":      types.StringValue("nginx"),
-			"namespace": types.StringValue("default"),
-			"labels": types.ObjectValueMust(
-				map[string]attr.Type{
-					"app": types.StringType,
-				},
-				map[string]attr.Value{
-					"app": types.StringValue("nginx"),
-				},
-			),
-		},
-	))
-
-	spec := types.DynamicValue(types.ObjectValueMust(
-		map[string]attr.Type{
-			"replicas": types.NumberType,
-		},
-		map[string]attr.Value{
-			"replicas": types.NumberValue(mustNewBigFloat(3)),
-		},
-	))
+			map[string]attr.Value{
+				"apiVersion": types.StringValue("apps/v1"),
+				"kind":       types.StringValue("Deployment"),
+				"metadata": types.ObjectValueMust(
+					map[string]attr.Type{
+						"name":      types.StringType,
+						"namespace": types.StringType,
+						"labels": types.ObjectType{AttrTypes: map[string]attr.Type{
+							"app": types.StringType,
+						}},
+					},
+					map[string]attr.Value{
+						"name":      types.StringValue("nginx"),
+						"namespace": types.StringValue("default"),
+						"labels": types.ObjectValueMust(
+							map[string]attr.Type{"app": types.StringType},
+							map[string]attr.Value{"app": types.StringValue("nginx")},
+						),
+					},
+				),
+				"spec": types.ObjectValueMust(
+					map[string]attr.Type{"replicas": types.NumberType},
+					map[string]attr.Value{"replicas": types.NumberValue(mustNewBigFloat(3))},
+				),
+			},
+		),
+	}
 
 	// Build unstructured
-	uo, diags := buildUnstructured(ctx, "apps/v1", "Deployment", metadata, spec)
+	uo, diags := buildUnstructured(ctx, model)
 	if diags.HasError() {
 		t.Fatalf("buildUnstructured() failed: %v", diags)
 	}
 
+	// Verify unstructured content
+	if uo.GetAPIVersion() != "apps/v1" {
+		t.Errorf("Expected apiVersion=apps/v1, got %s", uo.GetAPIVersion())
+	}
+	if uo.GetKind() != "Deployment" {
+		t.Errorf("Expected kind=Deployment, got %s", uo.GetKind())
+	}
+	if uo.GetName() != "nginx" {
+		t.Errorf("Expected name=nginx, got %s", uo.GetName())
+	}
+
 	// Set state from unstructured
-	model := &manifestResourceModelV2{}
-	diags = setStateFromUnstructured(ctx, uo, model)
+	resultModel := &manifestResourceModelV2{}
+	diags = setStateFromUnstructured(ctx, uo, resultModel)
 	if diags.HasError() {
 		t.Fatalf("setStateFromUnstructured() failed: %v", diags)
 	}
 
-	// Verify round trip
-	if model.APIVersion.ValueString() != "apps/v1" {
-		t.Errorf("Expected APIVersion=apps/v1, got %s", model.APIVersion.ValueString())
-	}
-	if model.Kind.ValueString() != "Deployment" {
-		t.Errorf("Expected Kind=Deployment, got %s", model.Kind.ValueString())
-	}
-
-	// Extract metadata.name to verify
-	name, err := extractMetadataField(ctx, model.Metadata, "name")
+	// Verify round trip via manifest
+	name, err := extractManifestMetadataField(ctx, resultModel.Manifest, "name")
 	if err != nil {
-		t.Fatalf("extractMetadataField() failed: %v", err)
+		t.Fatalf("extractManifestMetadataField() failed: %v", err)
 	}
 	if name != "nginx" {
 		t.Errorf("Expected name=nginx, got %s", name)
+	}
+
+	apiVersion, err := extractManifestField(ctx, resultModel.Manifest, "apiVersion")
+	if err != nil {
+		t.Fatalf("extractManifestField() failed: %v", err)
+	}
+	if apiVersion != "apps/v1" {
+		t.Errorf("Expected apiVersion=apps/v1, got %v", apiVersion)
 	}
 }
 

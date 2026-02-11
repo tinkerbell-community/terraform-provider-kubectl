@@ -41,6 +41,26 @@ func dynamicToMap(_ context.Context, d types.Dynamic) (map[string]any, diag.Diag
 	return m, nil
 }
 
+// dynamicToAny converts a types.Dynamic value to any Go value.
+// Unlike dynamicToMap, this handles scalars (string, bool, number) as well as maps and lists.
+// This is used for top-level Kubernetes fields that may be scalar (e.g., immutable, type).
+func dynamicToAny(_ context.Context, d types.Dynamic) (any, diag.Diagnostics) {
+	if d.IsNull() || d.IsUnknown() {
+		return nil, nil
+	}
+
+	underlying := d.UnderlyingValue()
+	result, err := encodeAttrValue(underlying)
+	if err != nil {
+		return nil, diag.Diagnostics{diag.NewErrorDiagnostic(
+			"Failed to convert Dynamic value",
+			fmt.Sprintf("Error encoding attribute value: %s", err),
+		)}
+	}
+
+	return result, nil
+}
+
 // mapToDynamic converts map[string]any to types.Dynamic
 // This is used to convert Kubernetes unstructured objects to Dynamic attributes.
 func mapToDynamic(ctx context.Context, m map[string]any) (types.Dynamic, diag.Diagnostics) {
@@ -49,6 +69,22 @@ func mapToDynamic(ctx context.Context, m map[string]any) (types.Dynamic, diag.Di
 	}
 
 	attrVal, diags := decodeAny(ctx, m)
+	if diags.HasError() {
+		return types.DynamicNull(), diags
+	}
+
+	return types.DynamicValue(attrVal), nil
+}
+
+// anyToDynamic converts any Go value to types.Dynamic.
+// This handles scalars, maps, and slices — used for Kubernetes top-level fields
+// that may be of any type.
+func anyToDynamic(ctx context.Context, v any) (types.Dynamic, diag.Diagnostics) {
+	if v == nil {
+		return types.DynamicNull(), nil
+	}
+
+	attrVal, diags := decodeAny(ctx, v)
 	if diags.HasError() {
 		return types.DynamicNull(), diags
 	}

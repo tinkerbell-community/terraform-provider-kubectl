@@ -25,10 +25,7 @@ func (r *manifestResource) applyManifestV2(
 	// Build unstructured object from Dynamic attributes
 	uo, diags := buildUnstructured(
 		ctx,
-		model.APIVersion.ValueString(),
-		model.Kind.ValueString(),
-		model.Metadata,
-		model.Spec,
+		model,
 	)
 	if diags.HasError() {
 		return fmt.Errorf("failed to build unstructured: %v", diags)
@@ -105,22 +102,28 @@ func (r *manifestResource) readManifestV2(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	// Extract name and namespace from metadata
-	name, err := extractMetadataField(ctx, model.Metadata, "name")
+	// Extract name and namespace from manifest.metadata
+	name, err := extractManifestMetadataField(ctx, model.Manifest, "name")
 	if err != nil || name == "" {
-		return fmt.Errorf("failed to extract name from metadata: %w", err)
+		return fmt.Errorf("failed to extract name from manifest.metadata: %w", err)
 	}
 
-	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
+	namespace, _ := extractManifestMetadataField(ctx, model.Manifest, "namespace")
+
+	// Extract apiVersion and kind from manifest
+	apiVersionAny, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+	kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
+	apiVersion := fmt.Sprintf("%v", apiVersionAny)
+	kind := fmt.Sprintf("%v", kindAny)
 
 	log.Printf("[DEBUG] Reading Kubernetes resource: %s/%s (namespace: %s)",
-		model.Kind.ValueString(), name, namespace)
+		kind, name, namespace)
 
 	// Create REST client
 	// Build a minimal unstructured object for the REST client
 	tempUo := &meta_v1_unstruct.Unstructured{}
-	tempUo.SetAPIVersion(model.APIVersion.ValueString())
-	tempUo.SetKind(model.Kind.ValueString())
+	tempUo.SetAPIVersion(apiVersion)
+	tempUo.SetKind(kind)
 	tempUo.SetName(name)
 	if namespace != "" {
 		tempUo.SetNamespace(namespace)
@@ -164,21 +167,27 @@ func (r *manifestResource) deleteManifestV2(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
-	// Extract name and namespace from metadata
-	name, err := extractMetadataField(ctx, model.Metadata, "name")
+	// Extract name and namespace from manifest.metadata
+	name, err := extractManifestMetadataField(ctx, model.Manifest, "name")
 	if err != nil || name == "" {
-		return fmt.Errorf("failed to extract name from metadata: %w", err)
+		return fmt.Errorf("failed to extract name from manifest.metadata: %w", err)
 	}
 
-	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
+	namespace, _ := extractManifestMetadataField(ctx, model.Manifest, "namespace")
+
+	// Extract apiVersion and kind from manifest
+	apiVersionAny, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+	kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
+	apiVersion := fmt.Sprintf("%v", apiVersionAny)
+	kind := fmt.Sprintf("%v", kindAny)
 
 	log.Printf("[DEBUG] Deleting Kubernetes resource: %s/%s (namespace: %s)",
-		model.Kind.ValueString(), name, namespace)
+		kind, name, namespace)
 
 	// Build minimal unstructured for REST client
 	uo := &meta_v1_unstruct.Unstructured{}
-	uo.SetAPIVersion(model.APIVersion.ValueString())
-	uo.SetKind(model.Kind.ValueString())
+	uo.SetAPIVersion(apiVersion)
+	uo.SetKind(kind)
 	uo.SetName(name)
 	if namespace != "" {
 		uo.SetNamespace(namespace)
@@ -221,9 +230,9 @@ func (r *manifestResource) deleteManifestV2(
 	}
 
 	if errors.IsNotFound(err) {
-		log.Printf("[DEBUG] Resource already deleted: %s/%s", model.Kind.ValueString(), name)
+		log.Printf("[DEBUG] Resource already deleted: %s/%s", kind, name)
 	} else {
-		log.Printf("[DEBUG] Successfully deleted resource: %s/%s", model.Kind.ValueString(), name)
+		log.Printf("[DEBUG] Successfully deleted resource: %s/%s", kind, name)
 	}
 
 	return nil

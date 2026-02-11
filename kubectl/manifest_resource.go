@@ -16,15 +16,19 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/dynamicplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/thedevsaddam/gojsonq/v2"
@@ -38,6 +42,7 @@ import (
 var (
 	_ resource.Resource                   = &manifestResource{}
 	_ resource.ResourceWithConfigure      = &manifestResource{}
+	_ resource.ResourceWithIdentity       = &manifestResource{}
 	_ resource.ResourceWithImportState    = &manifestResource{}
 	_ resource.ResourceWithModifyPlan     = &manifestResource{}
 	_ resource.ResourceWithValidateConfig = &manifestResource{}
@@ -49,12 +54,13 @@ type manifestResource struct {
 }
 
 // manifestResourceModel describes the resource data model.
+// manifestResourceModel describes the resource data model.
+// The manifest attribute contains the full Kubernetes resource definition
+// (apiVersion, kind, metadata, spec, data, etc.) as a single Dynamic value,
+// aligning with the upstream hashicorp/terraform-provider-kubernetes pattern.
 type manifestResourceModel struct {
 	ID             types.String   `tfsdk:"id"`
-	APIVersion     types.String   `tfsdk:"api_version"`
-	Kind           types.String   `tfsdk:"kind"`
-	Metadata       types.Dynamic  `tfsdk:"metadata"`
-	Spec           types.Dynamic  `tfsdk:"spec"`
+	Manifest       types.Dynamic  `tfsdk:"manifest"`
 	Status         types.Dynamic  `tfsdk:"status"`
 	Object         types.Dynamic  `tfsdk:"object"`
 	ComputedFields types.List     `tfsdk:"computed_fields"`
@@ -100,6 +106,92 @@ type fieldManagerModel struct {
 	ForceConflicts types.Bool   `tfsdk:"force_conflicts"`
 }
 
+// manifestIdentityModel describes the resource identity.
+type manifestIdentityModel struct {
+	APIVersion types.String `tfsdk:"api_version"`
+	Kind       types.String `tfsdk:"kind"`
+	Name       types.String `tfsdk:"name"`
+	Namespace  types.String `tfsdk:"namespace"`
+}
+
+// waitBlockObjectType returns the attr.Type for the wait block element type.
+// This is needed to create properly typed null/empty lists for blocks.
+func waitBlockObjectType() attr.Type {
+	return types.ObjectType{
+		AttrTypes: map[string]attr.Type{
+			"rollout": types.BoolType,
+			"field": types.ListType{ElemType: types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"key":        types.StringType,
+					"value":      types.StringType,
+					"value_type": types.StringType,
+				},
+			}},
+			"condition": types.ListType{ElemType: types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"type":   types.StringType,
+					"status": types.StringType,
+				},
+			}},
+			"error_on": types.ListType{ElemType: types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"key":     types.StringType,
+					"value":   types.StringType,
+					"message": types.StringType,
+				},
+			}},
+		},
+	}
+}
+
+// fieldManagerBlockObjectType returns the attr.Type for the field_manager block element type.
+func fieldManagerBlockObjectType() attr.Type {
+	return types.ObjectType{
+		AttrTypes: map[string]attr.Type{
+			"name":            types.StringType,
+			"force_conflicts": types.BoolType,
+		},
+	}
+}
+
+// buildIdentityModel creates an identity model from a manifest resource model.
+func buildIdentityModel(ctx context.Context, model *manifestResourceModel) manifestIdentityModel {
+	identity := manifestIdentityModel{}
+
+	apiVersion, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+	kind, _ := extractManifestField(ctx, model.Manifest, "kind")
+	identity.APIVersion = types.StringValue(fmt.Sprintf("%v", apiVersion))
+	identity.Kind = types.StringValue(fmt.Sprintf("%v", kind))
+
+	name, _ := extractManifestMetadataField(ctx, model.Manifest, "name")
+	if name != "" {
+		identity.Name = types.StringValue(name)
+	}
+	namespace, _ := extractManifestMetadataField(ctx, model.Manifest, "namespace")
+	if namespace != "" {
+		identity.Namespace = types.StringValue(namespace)
+	} else {
+		identity.Namespace = types.StringNull()
+	}
+
+	return identity
+}
+
+// setResponseIdentity sets the identity on a response if the identity field is populated.
+func setResponseIdentity(
+	ctx context.Context,
+	identity *tfsdk.ResourceIdentity,
+	model *manifestResourceModel,
+	diagnostics *diag.Diagnostics,
+) {
+	if identity == nil {
+		return
+	}
+
+	idModel := buildIdentityModel(ctx, model)
+	diagnostics.Append(identity.Set(ctx, idModel)...)
+}
+
 // NewManifestResource returns a new manifest resource.
 func NewManifestResource() resource.Resource {
 	return &manifestResource{}
@@ -114,6 +206,35 @@ func (r *manifestResource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_manifest"
 }
 
+// IdentitySchema returns the identity schema for this resource.
+func (r *manifestResource) IdentitySchema(
+	ctx context.Context,
+	req resource.IdentitySchemaRequest,
+	resp *resource.IdentitySchemaResponse,
+) {
+	resp.IdentitySchema = identityschema.Schema{
+		Version: 1,
+		Attributes: map[string]identityschema.Attribute{
+			"api_version": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Kubernetes API version (e.g., v1, apps/v1).",
+			},
+			"kind": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Kubernetes resource kind (e.g., ConfigMap, Deployment).",
+			},
+			"name": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Name of the Kubernetes resource.",
+			},
+			"namespace": identityschema.StringAttribute{
+				OptionalForImport: true,
+				Description:       "Namespace of the Kubernetes resource. Empty for cluster-scoped resources.",
+			},
+		},
+	}
+}
+
 // Schema defines the resource schema.
 func (r *manifestResource) Schema(
 	ctx context.Context,
@@ -126,41 +247,31 @@ func (r *manifestResource) Schema(
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
-				MarkdownDescription: "Kubernetes resource identifier " +
-					"(format: apiVersion//kind//name//namespace or apiVersion//kind//name for cluster-scoped)",
+				MarkdownDescription: "Kubernetes resource unique identifier (UID) assigned by the API server. " +
+					"This is a read-only value and has no impact on the plan.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"api_version": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Kubernetes API version (e.g., `v1`, `apps/v1`).",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"kind": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Kubernetes resource kind (e.g., `ConfigMap`, `Deployment`).",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"metadata": schema.DynamicAttribute{
-				Required:            true,
-				MarkdownDescription: "Standard Kubernetes object metadata containing at minimum `name` and optionally `namespace`, `labels`, `annotations`, etc.",
-			},
-			"spec": schema.DynamicAttribute{
-				Optional:            true,
-				MarkdownDescription: "Resource specification. Structure depends on the resource kind.",
+			"manifest": schema.DynamicAttribute{
+				Required: true,
+				MarkdownDescription: "An object representation of the Kubernetes resource manifest. " +
+					"Must contain `apiVersion`, `kind`, and `metadata` (with at least `name`). " +
+					"Additional fields like `spec`, `data`, `stringData`, etc. depend on the resource kind.",
 			},
 			"status": schema.DynamicAttribute{
 				Computed:            true,
 				MarkdownDescription: "Resource status as reported by the Kubernetes API server.",
+				PlanModifiers: []planmodifier.Dynamic{
+					dynamicplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"object": schema.DynamicAttribute{
 				Computed:            true,
 				MarkdownDescription: "The full resource object as returned by the API server.",
+				PlanModifiers: []planmodifier.Dynamic{
+					dynamicplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"computed_fields": schema.ListAttribute{
 				ElementType: types.StringType,
@@ -334,16 +445,40 @@ func (r *manifestResource) ValidateConfig(
 		return
 	}
 
-	// Validate metadata has "name"
-	if !config.Metadata.IsNull() && !config.Metadata.IsUnknown() {
-		metaMap, d := dynamicToMap(ctx, config.Metadata)
+	// Validate manifest has required fields: apiVersion, kind, metadata.name
+	if !config.Manifest.IsNull() && !config.Manifest.IsUnknown() {
+		manifestMap, d := dynamicToMap(ctx, config.Manifest)
 		resp.Diagnostics.Append(d...)
-		if !resp.Diagnostics.HasError() && metaMap != nil {
-			if _, ok := metaMap["name"]; !ok {
+		if !resp.Diagnostics.HasError() && manifestMap != nil {
+			if _, ok := manifestMap["apiVersion"]; !ok {
 				resp.Diagnostics.AddAttributeError(
-					path.Root("metadata"),
+					path.Root("manifest"),
 					"Missing required field",
-					"metadata must contain a 'name' field",
+					"manifest must contain an 'apiVersion' field",
+				)
+			}
+			if _, ok := manifestMap["kind"]; !ok {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("manifest"),
+					"Missing required field",
+					"manifest must contain a 'kind' field",
+				)
+			}
+			if meta, ok := manifestMap["metadata"]; ok {
+				if metaMap, ok := meta.(map[string]any); ok {
+					if _, ok := metaMap["name"]; !ok {
+						resp.Diagnostics.AddAttributeError(
+							path.Root("manifest"),
+							"Missing required field",
+							"manifest.metadata must contain a 'name' field",
+						)
+					}
+				}
+			} else {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("manifest"),
+					"Missing required field",
+					"manifest must contain a 'metadata' field",
 				)
 			}
 		}
@@ -436,6 +571,9 @@ func (r *manifestResource) Create(
 	// Set state
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
+
+	// Set identity
+	setResponseIdentity(ctx, resp.Identity, &plan, &resp.Diagnostics)
 }
 
 // Read reads the current state of the resource.
@@ -452,6 +590,9 @@ func (r *manifestResource) Read(
 		return
 	}
 
+	// Save prior manifest for reconciliation after read
+	priorManifest := state.Manifest
+
 	// Read from Kubernetes API
 	if err := r.readManifest(ctx, &state); err != nil {
 		// If resource not found, remove from state
@@ -467,9 +608,16 @@ func (r *manifestResource) Read(
 		return
 	}
 
+	// Reconcile manifest: keep only attributes from prior state to avoid
+	// perpetual diffs from server-generated fields (uid, creationTimestamp, etc.)
+	state.Manifest = reconcileDynamicWithPrior(ctx, priorManifest, state.Manifest)
+
 	// Set state
 	diags = resp.State.Set(ctx, state)
 	resp.Diagnostics.Append(diags...)
+
+	// Set identity
+	setResponseIdentity(ctx, resp.Identity, &state, &resp.Diagnostics)
 }
 
 // Update updates an existing resource.
@@ -522,6 +670,9 @@ func (r *manifestResource) Update(
 	// Set state
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
+
+	// Set identity
+	setResponseIdentity(ctx, resp.Identity, &plan, &resp.Diagnostics)
 }
 
 // Delete removes the resource.
@@ -563,12 +714,15 @@ func (r *manifestResource) ImportState(
 	req resource.ImportStateRequest,
 	resp *resource.ImportStateResponse,
 ) {
-	// Support both formats:
-	// 1. apiVersion=<value>,kind=<value>,name=<value>[,namespace=<value>]
-	// 2. apiVersion//kind//name[//namespace]
 	var apiVersion, kind, name, namespace string
 
-	if strings.Contains(req.ID, "=") {
+	// Support three import methods:
+	// 1. String ID with key=value pairs: apiVersion=<v>,kind=<k>,name=<n>[,namespace=<ns>]
+	// 2. String ID with // separated: apiVersion//kind//name[//namespace]
+	// 3. Identity-based import (Terraform 1.12+ import block with identity attribute)
+	// Try string ID first since identity schema is always defined and req.Identity
+	// will be non-nil even when only ImportStateId is used.
+	if req.ID != "" && strings.Contains(req.ID, "=") {
 		// ParseResourceID format (key=value pairs)
 		gvk, n, ns, err := util.ParseResourceID(req.ID)
 		if err != nil {
@@ -582,7 +736,7 @@ func (r *manifestResource) ImportState(
 		kind = gvk.Kind
 		name = n
 		namespace = ns
-	} else {
+	} else if req.ID != "" {
 		// // separated format
 		idParts := strings.Split(req.ID, "//")
 		if len(idParts) != 3 && len(idParts) != 4 {
@@ -602,31 +756,62 @@ func (r *manifestResource) ImportState(
 		if len(idParts) == 4 {
 			namespace = idParts[3]
 		}
+	} else if req.Identity != nil {
+		// Import via identity attributes (Terraform 1.12+)
+		var identityModel manifestIdentityModel
+		diags := req.Identity.Get(ctx, &identityModel)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		apiVersion = identityModel.APIVersion.ValueString()
+		kind = identityModel.Kind.ValueString()
+		name = identityModel.Name.ValueString()
+		if !identityModel.Namespace.IsNull() {
+			namespace = identityModel.Namespace.ValueString()
+		}
+	} else {
+		resp.Diagnostics.AddError(
+			"Invalid Import",
+			"No import ID or identity attributes provided.",
+		)
+		return
 	}
 
-	// Build metadata from import ID
-	metadataMap := map[string]any{
-		"name": name,
+	// Build manifest from import ID
+	manifestMap := map[string]any{
+		"apiVersion": apiVersion,
+		"kind":       kind,
+		"metadata":   map[string]any{"name": name},
 	}
 	if namespace != "" {
-		metadataMap["namespace"] = namespace
+		manifestMap["metadata"].(map[string]any)["namespace"] = namespace
 	}
 
-	metadataDynamic, diags := mapToDynamic(ctx, metadataMap)
+	manifestDynamic, diags := mapToDynamic(ctx, manifestMap)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	model := manifestResourceModel{
-		ID:         types.StringValue(req.ID),
-		APIVersion: types.StringValue(apiVersion),
-		Kind:       types.StringValue(kind),
-		Metadata:   metadataDynamic,
-		Spec:       types.DynamicNull(),
-		Status:     types.DynamicNull(),
-		Object:     types.DynamicNull(),
-		ApplyOnly:  types.BoolValue(false),
+		ID:             types.StringValue(req.ID),
+		Manifest:       manifestDynamic,
+		Status:         types.DynamicNull(),
+		Object:         types.DynamicNull(),
+		ComputedFields: types.ListNull(types.StringType),
+		ApplyOnly:      types.BoolValue(false),
+		DeleteCascade:  types.StringNull(),
+		Wait:           types.ListNull(waitBlockObjectType()),
+		FieldManager:   types.ListNull(fieldManagerBlockObjectType()),
+		Timeouts: timeouts.Value{
+			Object: types.ObjectNull(map[string]attr.Type{
+				"create": types.StringType,
+				"update": types.StringType,
+				"delete": types.StringType,
+			}),
+		},
 	}
 
 	// Attempt OpenAPI-aware import if we have provider data
@@ -649,6 +834,14 @@ func (r *manifestResource) ImportState(
 
 			diags = resp.State.Set(ctx, model)
 			resp.Diagnostics.Append(diags...)
+
+			// Set identity
+			setResponseIdentity(ctx, resp.Identity, &model, &resp.Diagnostics)
+
+			// Mark as imported in private state for ModifyPlan
+			if resp.Private != nil {
+				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "IsImported", []byte(`true`))...)
+			}
 			return
 		}
 		// Fall through to basic read if OpenAPI resolution fails
@@ -672,6 +865,14 @@ func (r *manifestResource) ImportState(
 	// Set state
 	diags = resp.State.Set(ctx, model)
 	resp.Diagnostics.Append(diags...)
+
+	// Set identity
+	setResponseIdentity(ctx, resp.Identity, &model, &resp.Diagnostics)
+
+	// Mark as imported in private state for ModifyPlan
+	if resp.Private != nil {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "IsImported", []byte(`true`))...)
+	}
 }
 
 // ModifyPlan handles plan modification with OpenAPI type resolution.
@@ -697,29 +898,70 @@ func (r *manifestResource) ModifyPlan(
 		return
 	}
 
-	// Check if metadata.name or metadata.namespace changed — requires replacement
-	planName, _ := extractMetadataField(ctx, plan.Metadata, "name")
-	stateName, _ := extractMetadataField(ctx, state.Metadata, "name")
-	planNamespace, _ := extractMetadataField(ctx, plan.Metadata, "namespace")
-	stateNamespace, _ := extractMetadataField(ctx, state.Metadata, "namespace")
+	// Check if apiVersion, kind, or metadata.name/namespace changed — requires replacement
+	planAPIVersion, _ := extractManifestField(ctx, plan.Manifest, "apiVersion")
+	stateAPIVersion, _ := extractManifestField(ctx, state.Manifest, "apiVersion")
+	planKind, _ := extractManifestField(ctx, plan.Manifest, "kind")
+	stateKind, _ := extractManifestField(ctx, state.Manifest, "kind")
+	planName, _ := extractManifestMetadataField(ctx, plan.Manifest, "name")
+	stateName, _ := extractManifestMetadataField(ctx, state.Manifest, "name")
+	planNamespace, _ := extractManifestMetadataField(ctx, plan.Manifest, "namespace")
+	stateNamespace, _ := extractManifestMetadataField(ctx, state.Manifest, "namespace")
 
+	if fmt.Sprintf("%v", planAPIVersion) != fmt.Sprintf("%v", stateAPIVersion) {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
+	}
+	if fmt.Sprintf("%v", planKind) != fmt.Sprintf("%v", stateKind) {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
+	}
 	if planName != stateName {
-		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("metadata"))
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
 	}
-	if planNamespace != stateNamespace {
-		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("metadata"))
+
+	// Check if this resource was imported — skip namespace RequiresReplace for imported resources
+	// since the state namespace may not match the plan namespace until the first apply
+	isImported := false
+	if req.Private != nil {
+		importedData, d := req.Private.GetKey(ctx, "IsImported")
+		resp.Diagnostics.Append(d...)
+		if len(importedData) > 0 && string(importedData) == "true" {
+			isImported = true
+		}
 	}
+
+	if planNamespace != stateNamespace && !isImported {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
+	}
+
+	// Clear the IsImported flag after handling it (so subsequent plans behave normally)
+	if isImported && resp.Private != nil {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "IsImported", []byte(`false`))...)
+	}
+
+	// Save original plan manifest before OpenAPI morphing for change detection.
+	origManifest := plan.Manifest
 
 	// Attempt OpenAPI type resolution for computed field handling
-	if r.providerData != nil && !plan.APIVersion.IsUnknown() && !plan.Kind.IsUnknown() {
+	apiVersionStr := fmt.Sprintf("%v", planAPIVersion)
+	kindStr := fmt.Sprintf("%v", planKind)
+	if r.providerData != nil && apiVersionStr != "" && kindStr != "" {
 		r.modifyPlanWithOpenAPI(ctx, &plan, &state, resp)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-	} else {
-		// Without OpenAPI, just mark computed fields as unknown
+	}
+
+	// Determine if user-provided manifest changed between plan and state.
+	// If something changed, status/object must be Unknown (provider will produce new values).
+	// If nothing changed, preserve state values to prevent perpetual diffs.
+	hasChange := !origManifest.Equal(state.Manifest)
+
+	if hasChange {
 		plan.Status = types.DynamicUnknown()
 		plan.Object = types.DynamicUnknown()
+	} else {
+		plan.Status = state.Status
+		plan.Object = state.Object
 	}
 
 	diags = resp.Plan.Set(ctx, plan)
@@ -728,95 +970,70 @@ func (r *manifestResource) ModifyPlan(
 
 // modifyPlanWithOpenAPI uses OpenAPI spec to resolve the resource type and
 // handle computed fields during plan modification.
+// For Update plans, it performs tree traversal comparing prior manifest with proposed
+// manifest and prior object to minimize "known after apply" noise.
 func (r *manifestResource) modifyPlanWithOpenAPI(
 	ctx context.Context,
 	plan *manifestResourceModel,
 	state *manifestResourceModel,
 	resp *resource.ModifyPlanResponse,
 ) {
-	apiVersion := plan.APIVersion.ValueString()
-	kind := plan.Kind.ValueString()
+	// Extract apiVersion and kind from manifest
+	manifestMap, d := dynamicToMap(ctx, plan.Manifest)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() || manifestMap == nil {
+		return
+	}
+
+	apiVersion := fmt.Sprintf("%v", manifestMap["apiVersion"])
+	kind := fmt.Sprintf("%v", manifestMap["kind"])
 	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
 
 	// Try to resolve OpenAPI type
-	objectType, _, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
+	objectType, hints, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
 	if err != nil {
-		// If we can't resolve the type, continue without OpenAPI enhancement
 		log.Printf("[DEBUG] Could not resolve OpenAPI type for %s: %v", gvk.String(), err)
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
 		return
 	}
 
 	if !objectType.Is(tftypes.Object{}) {
-		// Non-structural CRD — no schema available
-		log.Printf("[DEBUG] Non-structural type for %s, skipping OpenAPI plan modification", gvk.String())
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
+		log.Printf(
+			"[DEBUG] Non-structural type for %s, skipping OpenAPI plan modification",
+			gvk.String(),
+		)
 		return
 	}
 
-	// Build manifest map from plan attributes for morphing
-	manifestMap := map[string]any{
-		"apiVersion": apiVersion,
-		"kind":       kind,
-	}
+	// Build proposed manifest map directly from the manifest attribute
+	proposedManifestMap := manifestMap
 
-	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
-		metaMap, d := dynamicToMap(ctx, plan.Metadata)
-		resp.Diagnostics.Append(d...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if metaMap != nil {
-			manifestMap["metadata"] = metaMap
-		}
-	}
-
-	if !plan.Spec.IsNull() && !plan.Spec.IsUnknown() {
-		specMap, d := dynamicToMap(ctx, plan.Spec)
-		resp.Diagnostics.Append(d...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if specMap != nil {
-			manifestMap["spec"] = specMap
-		}
-	}
-
-	// Convert to tftypes.Value using OpenAPI type
-	planTfValue, err := payload.ToTFValue(
-		manifestMap,
+	// Convert proposed manifest to tftypes.Value using OpenAPI type
+	ppMan, err := payload.ToTFValue(
+		proposedManifestMap,
 		objectType,
 		nil,
 		tftypes.NewAttributePath(),
 	)
 	if err != nil {
 		log.Printf("[DEBUG] Could not convert plan to tftypes.Value: %v", err)
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
 		return
 	}
 
-	// Apply morph.ValueToType to coerce to OpenAPI type
-	morphedPlan, d := morph.ValueToType(planTfValue, objectType, tftypes.NewAttributePath())
-	if len(d) > 0 {
-		log.Printf("[DEBUG] Could not morph plan to OpenAPI type: %v", d)
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
+	// Morph to OpenAPI type
+	morphedPlan, morphDiags := morph.ValueToType(ppMan, objectType, tftypes.NewAttributePath())
+	if len(morphDiags) > 0 {
+		log.Printf("[DEBUG] Could not morph plan to OpenAPI type: %v", morphDiags)
 		return
 	}
 
-	// Apply morph.DeepUnknown to mark unspecified fields as unknown
+	// DeepUnknown to mark unspecified fields
 	completePlan, err := morph.DeepUnknown(objectType, morphedPlan, tftypes.NewAttributePath())
 	if err != nil {
 		log.Printf("[DEBUG] Could not apply DeepUnknown: %v", err)
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
 		return
 	}
 
-	// Handle computed_fields: mark specified paths as unknown
+	// Build computed fields map
 	computedFields := make(map[string]*tftypes.AttributePath)
 	if !plan.ComputedFields.IsNull() && !plan.ComputedFields.IsUnknown() {
 		var cfList []string
@@ -831,67 +1048,170 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 		}
 	}
 	if len(computedFields) == 0 {
-		// Default computed fields
-		atp := tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("annotations")
+		atp := tftypes.NewAttributePath().
+			WithAttributeName("metadata").
+			WithAttributeName("annotations")
 		computedFields[atp.String()] = atp
 		atp = tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("labels")
 		computedFields[atp.String()] = atp
 	}
 
-	// Transform to mark computed_fields as unknown
-	completePlan, err = tftypes.Transform(
-		completePlan,
-		func(ap *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
-			if _, ok := computedFields[ap.String()]; ok {
-				return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
+	// Build prior manifest and prior object tftypes.Values for Update comparison
+	var priorMan tftypes.Value
+	var priorObj tftypes.Value
+	hasPrior := false
+
+	if !state.Object.IsNull() && !state.Object.IsUnknown() {
+		// Build prior manifest from state
+		stateManifestMap, d := dynamicToMap(ctx, state.Manifest)
+		resp.Diagnostics.Append(d...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if stateManifestMap == nil {
+			return
+		}
+
+		priorManTfValue, err := payload.ToTFValue(
+			stateManifestMap, objectType, nil, tftypes.NewAttributePath(),
+		)
+		if err == nil {
+			priorMan = priorManTfValue
+		}
+
+		// Build prior object from state's full object
+		objectMap, d := dynamicToMap(ctx, state.Object)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() && objectMap != nil {
+			priorObjTfValue, err := payload.ToTFValue(
+				objectMap, objectType, hints, tftypes.NewAttributePath(),
+			)
+			if err == nil {
+				hasPrior = true
+				priorObj = priorObjTfValue
 			}
-			return v, nil
-		},
-	)
-	if err != nil {
-		log.Printf("[DEBUG] Could not mark computed fields: %v", err)
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
-		return
+		}
+	}
+
+	if hasPrior {
+		// Update plan: compare prior manifest with proposed manifest and use prior object values
+		completePlan, err = tftypes.Transform(
+			completePlan,
+			func(ap *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+				_, isComputed := computedFields[ap.String()]
+
+				if v.IsKnown() {
+					// This is a value from current configuration — include it in the plan
+					hasChanged := false
+
+					// Check if value changed between prior and proposed manifest
+					wasCfg, restPath, walkErr := tftypes.WalkAttributePath(priorMan, ap)
+					if walkErr != nil && len(restPath.Steps()) != 0 {
+						// New field not in prior config
+						hasChanged = true
+					}
+					if nowCfg, restPath, walkErr := tftypes.WalkAttributePath(ppMan, ap); walkErr == nil {
+						hasChanged = len(restPath.Steps()) == 0 &&
+							wasCfg.(tftypes.Value).IsKnown() &&
+							!wasCfg.(tftypes.Value).Equal(nowCfg.(tftypes.Value))
+						if hasChanged {
+							h, ok := hints[morph.ValueToTypePath(ap).String()]
+							if ok && h == api.PreserveUnknownFieldsLabel {
+								resp.Diagnostics.AddWarning(
+									fmt.Sprintf(
+										"The attribute path %v value's type is an x-kubernetes-preserve-unknown-field",
+										morph.ValueToTypePath(ap).String(),
+									),
+									"Changes to the type may cause some unexpected behavior.",
+								)
+							}
+						}
+					}
+
+					if isComputed {
+						if hasChanged {
+							// Computed field changed — mark unknown for API to fill
+							return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
+						}
+						// Computed field not changed — carry forward from prior object
+						nowVal, restPath, walkErr := tftypes.WalkAttributePath(priorObj, ap)
+						if walkErr == nil && len(restPath.Steps()) == 0 {
+							return nowVal.(tftypes.Value), nil
+						}
+					}
+					return v, nil
+				}
+
+				// Unknown value: check if it was in prior manifest (removed from config)
+				wasVal, restPath, walkErr := tftypes.WalkAttributePath(priorMan, ap)
+				if walkErr == nil && len(restPath.Steps()) == 0 &&
+					wasVal.(tftypes.Value).IsKnown() {
+					// Attribute was previously set in config and has now been removed
+					// Return unknown to give the API a chance to set a default
+					return v, nil
+				}
+
+				// Check for default value from prior state object
+				priorAttrVal, restPath, walkErr := tftypes.WalkAttributePath(priorObj, ap)
+				if walkErr != nil {
+					if len(restPath.Steps()) > 0 {
+						// Attribute wasn't fully present — use proposed value
+						return v, nil
+					}
+					// Path totally foreign — keep as-is
+					return v, nil
+				}
+				if len(restPath.Steps()) > 0 {
+					log.Printf(
+						"[WARN] Unexpected missing attribute from state at %s + %s",
+						ap.String(), restPath.String(),
+					)
+				}
+				return priorAttrVal.(tftypes.Value), nil
+			},
+		)
+		if err != nil {
+			log.Printf("[DEBUG] Could not apply Update tree traversal: %v", err)
+			return
+		}
+	} else {
+		// Create plan (no prior state): just mark computed_fields as unknown
+		completePlan, err = tftypes.Transform(
+			completePlan,
+			func(ap *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+				if _, ok := computedFields[ap.String()]; ok {
+					return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
+				}
+				return v, nil
+			},
+		)
+		if err != nil {
+			log.Printf("[DEBUG] Could not mark computed fields: %v", err)
+			return
+		}
 	}
 
 	// Convert back to map[string]any for framework
 	resultMap, err := payload.FromTFValue(completePlan, nil, tftypes.NewAttributePath())
 	if err != nil {
 		log.Printf("[DEBUG] Could not convert morphed plan back to map: %v", err)
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
 		return
 	}
 
 	resultContent, ok := resultMap.(map[string]any)
 	if !ok {
-		plan.Status = types.DynamicUnknown()
-		plan.Object = types.DynamicUnknown()
 		return
 	}
 
-	// Update plan metadata from morphed result
-	if meta, ok := resultContent["metadata"].(map[string]any); ok {
-		metaDynamic, d := mapToDynamic(ctx, meta)
-		resp.Diagnostics.Append(d...)
-		if !resp.Diagnostics.HasError() {
-			plan.Metadata = metaDynamic
-		}
+	// Update plan manifest from morphed result (writing back the entire manifest)
+	manifestDynamic, d := mapToDynamic(ctx, resultContent)
+	resp.Diagnostics.Append(d...)
+	if !resp.Diagnostics.HasError() {
+		plan.Manifest = manifestDynamic
 	}
 
-	// Update plan spec from morphed result
-	if spec, ok := resultContent["spec"].(map[string]any); ok {
-		specDynamic, d := mapToDynamic(ctx, spec)
-		resp.Diagnostics.Append(d...)
-		if !resp.Diagnostics.HasError() {
-			plan.Spec = specDynamic
-		}
-	}
-
-	// Mark status and object as unknown (computed)
-	plan.Status = types.DynamicUnknown()
-	plan.Object = types.DynamicUnknown()
+	// NOTE: status and object are handled by the centralized change detection
+	// in ModifyPlan, not here.
 }
 
 // applyManifest applies the manifest to Kubernetes using server-side apply,
@@ -900,15 +1220,24 @@ func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
+	// Save user-provided manifest before readManifest overwrites it.
+	// The API response includes server-generated fields (uid, creationTimestamp, etc.)
+	// which would change the types.Dynamic object type and cause Terraform's
+	// "wrong final value type" consistency check to fail.
+	plannedManifest := model.Manifest
+
 	// Delegate to applyManifestV2 for the actual apply
 	if err := r.applyManifestV2(ctx, model); err != nil {
 		return err
 	}
 
-	// Read back to populate state from server response
-	if err := r.readManifestV2(ctx, model); err != nil {
+	// Read back to populate computed fields (ID, status, object) from server response
+	if err := r.readManifest(ctx, model); err != nil {
 		return fmt.Errorf("failed to read manifest after apply: %w", err)
 	}
+
+	// Restore user-provided manifest to maintain type compatibility with plan
+	model.Manifest = plannedManifest
 
 	// Handle wait block if specified
 	if model.Wait.IsNull() || model.Wait.IsUnknown() {
@@ -932,10 +1261,12 @@ func (r *manifestResource) applyManifest(
 	defer cancel()
 
 	// Get name/namespace for log messages
-	name, _ := extractMetadataField(ctx, model.Metadata, "name")
-	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
-	kind := model.Kind.ValueString()
-	apiVersion := model.APIVersion.ValueString()
+	name, _ := extractManifestMetadataField(ctx, model.Manifest, "name")
+	namespace, _ := extractManifestMetadataField(ctx, model.Manifest, "namespace")
+	apiVersionAny, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+	kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
+	kind := fmt.Sprintf("%v", kindAny)
+	apiVersion := fmt.Sprintf("%v", apiVersionAny)
 
 	// Check error_on conditions first during wait
 	var errorOnConditions []waitErrorOnModel
@@ -1215,10 +1546,37 @@ func (r *manifestResource) waitWithErrorCheck(
 }
 
 // readManifest reads a resource from Kubernetes and populates model state.
+// It tries OpenAPI-aware reading first for better type fidelity, falling back
+// to basic reading if OpenAPI resolution fails.
 func (r *manifestResource) readManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
 ) error {
+	// Try OpenAPI-aware read if provider data is available
+	if r.providerData != nil {
+		apiVersionAny, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+		kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
+		apiVersion := fmt.Sprintf("%v", apiVersionAny)
+		kind := fmt.Sprintf("%v", kindAny)
+		if apiVersion != "" && kind != "" {
+			gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+
+			objectType, typeHints, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
+			if err == nil && objectType != nil {
+				if readErr := r.readManifestWithOpenAPI(ctx, model, objectType, typeHints); readErr != nil {
+					// If OpenAPI read fails, fall back to basic read
+					log.Printf(
+						"[DEBUG] OpenAPI read failed, falling back to basic read: %v",
+						readErr,
+					)
+					return r.readManifestV2(ctx, model)
+				}
+				return nil
+			}
+			log.Printf("[DEBUG] Could not resolve OpenAPI type for %s: %v", gvk.String(), err)
+		}
+	}
+
 	return r.readManifestV2(ctx, model)
 }
 
@@ -1229,16 +1587,18 @@ func (r *manifestResource) readManifestWithOpenAPI(
 	objectType tftypes.Type,
 	typeHints map[string]string,
 ) error {
-	// Extract name and namespace from metadata
-	name, err := extractMetadataField(ctx, model.Metadata, "name")
+	// Extract name and namespace from manifest
+	name, err := extractManifestMetadataField(ctx, model.Manifest, "name")
 	if err != nil || name == "" {
-		return fmt.Errorf("failed to extract name from metadata: %w", err)
+		return fmt.Errorf("failed to extract name from manifest.metadata: %w", err)
 	}
-	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
+	namespace, _ := extractManifestMetadataField(ctx, model.Manifest, "namespace")
 
 	// Get GVK
-	apiVersion := model.APIVersion.ValueString()
-	kind := model.Kind.ValueString()
+	apiVersionAny, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+	kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
+	apiVersion := fmt.Sprintf("%v", apiVersionAny)
+	kind := fmt.Sprintf("%v", kindAny)
 	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
 
 	// Get REST mapper and dynamic client
@@ -1315,44 +1675,39 @@ func (r *manifestResource) setStateFromOpenAPIResult(
 	rawObj *meta_v1_unstruct.Unstructured,
 	model *manifestResourceModel,
 ) error {
-	model.APIVersion = types.StringValue(rawObj.GetAPIVersion())
-	model.Kind = types.StringValue(rawObj.GetKind())
-
-	// Set ID
+	// Set ID to Kubernetes UID
 	namespace := rawObj.GetNamespace()
 	name := rawObj.GetName()
-	if namespace != "" {
-		model.ID = types.StringValue(fmt.Sprintf(
-			"%s//%s//%s//%s",
-			rawObj.GetAPIVersion(), rawObj.GetKind(), name, namespace,
-		))
+	uid := string(rawObj.GetUID())
+	if uid != "" {
+		model.ID = types.StringValue(uid)
 	} else {
-		model.ID = types.StringValue(fmt.Sprintf(
-			"%s//%s//%s",
-			rawObj.GetAPIVersion(), rawObj.GetKind(), name,
-		))
+		if namespace != "" {
+			model.ID = types.StringValue(fmt.Sprintf(
+				"%s//%s//%s//%s",
+				rawObj.GetAPIVersion(), rawObj.GetKind(), name, namespace,
+			))
+		} else {
+			model.ID = types.StringValue(fmt.Sprintf(
+				"%s//%s//%s",
+				rawObj.GetAPIVersion(), rawObj.GetKind(), name,
+			))
+		}
 	}
 
 	var diags diag.Diagnostics
 
-	// Convert metadata from cleaned content
-	if meta, ok := content["metadata"].(map[string]any); ok {
-		metaDynamic, d := mapToDynamic(ctx, meta)
-		diags.Append(d...)
-		if !diags.HasError() {
-			model.Metadata = metaDynamic
+	// Build manifest from cleaned content (without status and server-side fields)
+	manifestContent := make(map[string]any)
+	for k, v := range content {
+		if k != "status" {
+			manifestContent[k] = v
 		}
 	}
-
-	// Convert spec from cleaned content
-	if spec, ok := content["spec"].(map[string]any); ok {
-		specDynamic, d := mapToDynamic(ctx, spec)
-		diags.Append(d...)
-		if !diags.HasError() {
-			model.Spec = specDynamic
-		}
-	} else {
-		model.Spec = types.DynamicNull()
+	manifestDynamic, d := mapToDynamic(ctx, manifestContent)
+	diags.Append(d...)
+	if !diags.HasError() {
+		model.Manifest = manifestDynamic
 	}
 
 	// Status from raw object (server-side fields were removed from content)
@@ -1392,10 +1747,12 @@ func (r *manifestResource) deleteManifest(
 	}
 
 	// Wait for deletion to complete
-	name, _ := extractMetadataField(ctx, model.Metadata, "name")
-	namespace, _ := extractMetadataField(ctx, model.Metadata, "namespace")
-	apiVersion := model.APIVersion.ValueString()
-	kind := model.Kind.ValueString()
+	name, _ := extractManifestMetadataField(ctx, model.Manifest, "name")
+	namespace, _ := extractManifestMetadataField(ctx, model.Manifest, "namespace")
+	apiVersionAny, _ := extractManifestField(ctx, model.Manifest, "apiVersion")
+	kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
+	apiVersion := fmt.Sprintf("%v", apiVersionAny)
+	kind := fmt.Sprintf("%v", kindAny)
 
 	deleteTimeout, d := model.Timeouts.Delete(ctx, 5*time.Minute)
 	if d.HasError() {
