@@ -159,9 +159,6 @@ func extractManifestMetadataField(
 	return "", nil // Field not present (may be optional)
 }
 
-// manifestResourceModelV2 is now unified as manifestResourceModel - kept as alias for backward compatibility.
-type manifestResourceModelV2 = manifestResourceModel
-
 // reconcileDynamicWithPrior reconciles a Dynamic value from the API with a
 // prior Dynamic value (from state). It keeps only the attributes that existed
 // in the prior value, updated with current values from the API.

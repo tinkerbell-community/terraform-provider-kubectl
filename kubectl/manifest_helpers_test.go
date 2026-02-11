@@ -168,7 +168,7 @@ func TestSetStateFromUnstructured(t *testing.T) {
 		name    string
 		input   *meta_v1_unstruct.Unstructured
 		wantErr bool
-		check   func(t *testing.T, model *manifestResourceModelV2)
+		check   func(t *testing.T, model *manifestResourceModel)
 	}{
 		{
 			name: "simple ConfigMap",
@@ -186,7 +186,7 @@ func TestSetStateFromUnstructured(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, model *manifestResourceModelV2) {
+			check: func(t *testing.T, model *manifestResourceModel) {
 				if model.ID.ValueString() != "v1//ConfigMap//test-config//default" {
 					t.Errorf(
 						"Expected ID=v1//ConfigMap//test-config//default, got %s",
@@ -234,7 +234,7 @@ func TestSetStateFromUnstructured(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, model *manifestResourceModelV2) {
+			check: func(t *testing.T, model *manifestResourceModel) {
 				// Manifest should have spec but not status
 				manifestMap, d := dynamicToMap(ctx, model.Manifest)
 				if d.HasError() {
@@ -264,7 +264,7 @@ func TestSetStateFromUnstructured(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, model *manifestResourceModelV2) {
+			check: func(t *testing.T, model *manifestResourceModel) {
 				expectedID := "v1//Namespace//test-namespace"
 				if model.ID.ValueString() != expectedID {
 					t.Errorf("Expected ID=%s, got %s", expectedID, model.ID.ValueString())
@@ -275,7 +275,7 @@ func TestSetStateFromUnstructured(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			model := &manifestResourceModelV2{}
+			model := &manifestResourceModel{}
 			diags := setStateFromUnstructured(ctx, tt.input, model)
 			if (diags.HasError()) != tt.wantErr {
 				t.Errorf("setStateFromUnstructured() error = %v, wantErr %v", diags, tt.wantErr)
@@ -512,7 +512,7 @@ func TestRoundTripUnstructured(t *testing.T) {
 	}
 
 	// Set state from unstructured
-	resultModel := &manifestResourceModelV2{}
+	resultModel := &manifestResourceModel{}
 	diags = setStateFromUnstructured(ctx, uo, resultModel)
 	if diags.HasError() {
 		t.Fatalf("setStateFromUnstructured() failed: %v", diags)
