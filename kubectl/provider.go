@@ -470,6 +470,7 @@ func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		NewServerVersionResource,
 		NewManifestResource,
+		NewPatchResource,
 	}
 }
 
