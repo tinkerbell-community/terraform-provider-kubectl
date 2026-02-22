@@ -1,6 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+//nolint:forcetypeassert
 package api
 
 import (
@@ -113,7 +114,7 @@ func NewResourceWaiter(
 
 	if v, ok := waitForBlockVal["rollout"]; ok {
 		var rollout bool
-		v.As(&rollout)
+		_ = v.As(&rollout)
 		if rollout {
 			return &RolloutWaiter{
 				Resource:     resource,
@@ -125,7 +126,7 @@ func NewResourceWaiter(
 
 	if v, ok := waitForBlockVal["condition"]; ok {
 		var conditionsBlocks []tftypes.Value
-		v.As(&conditionsBlocks)
+		_ = v.As(&conditionsBlocks)
 		if len(conditionsBlocks) > 0 {
 			return &ConditionsWaiter{
 				Resource:     resource,
@@ -146,12 +147,12 @@ func NewResourceWaiter(
 	}
 
 	var vm map[string]tftypes.Value
-	fields.As(&vm)
+	_ = fields.As(&vm)
 	var matchers []FieldMatcher
 
 	for k, v := range vm {
 		var expr string
-		v.As(&expr)
+		_ = v.As(&expr)
 		var re *regexp.Regexp
 		if expr == "*" {
 			re = regexp.MustCompile("(.*)?")
@@ -239,14 +240,14 @@ func (w *FieldWaiter) Wait(ctx context.Context) error {
 				v := vi.(tftypes.Value)
 				switch {
 				case v.Type().Is(tftypes.String):
-					v.As(&s)
+					_ = v.As(&s)
 				case v.Type().Is(tftypes.Bool):
 					var vb bool
-					v.As(&vb)
+					_ = v.As(&vb)
 					s = fmt.Sprintf("%t", vb)
 				case v.Type().Is(tftypes.Number):
 					var f big.Float
-					v.As(&f)
+					_ = v.As(&f)
 					if f.IsInt() {
 						i, _ := f.Int64()
 						s = fmt.Sprintf("%d", i)
@@ -472,10 +473,10 @@ func (w *ConditionsWaiter) Wait(ctx context.Context) error {
 				conditionsMet := true
 				for _, c := range w.Conditions {
 					var condition map[string]tftypes.Value
-					c.As(&condition)
+					_ = c.As(&condition)
 					var conditionType, conditionStatus string
-					condition["type"].As(&conditionType)
-					condition["status"].As(&conditionStatus)
+					_ = condition["type"].As(&conditionType)
+					_ = condition["status"].As(&conditionStatus)
 					conditionMet := false
 					for _, cc := range conditions {
 						ccc := cc.(map[string]any)

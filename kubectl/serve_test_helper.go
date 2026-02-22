@@ -20,16 +20,22 @@ const providerName = "registry.terraform.io/alekc/kubectl"
 
 // ServeTest starts an in-process framework provider server for acceptance testing.
 // It returns ReattachInfo that can be passed to terraform-exec's SetReattachInfo.
-func ServeTest(ctx context.Context, logger hclog.Logger, t *testing.T) (tfexec.ReattachInfo, error) {
+func ServeTest(
+	ctx context.Context,
+	logger hclog.Logger,
+	t *testing.T,
+) (tfexec.ReattachInfo, error) {
 	reattachConfigCh := make(chan *plugin.ReattachConfig)
 
-	go tf6server.Serve(
-		providerName,
-		providerserver.NewProtocol6(New("test")()),
-		tf6server.WithDebug(ctx, reattachConfigCh, nil),
-		tf6server.WithLoggingSink(t),
-		tf6server.WithGoPluginLogger(logger),
-	)
+	go func() {
+		_ = tf6server.Serve(
+			providerName,
+			providerserver.NewProtocol6(New("test")()),
+			tf6server.WithDebug(ctx, reattachConfigCh, nil),
+			tf6server.WithLoggingSink(t),
+			tf6server.WithGoPluginLogger(logger),
+		)
+	}()
 
 	reattachConfig, err := waitForReattachConfig(reattachConfigCh)
 	if err != nil {

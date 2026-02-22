@@ -22,7 +22,11 @@ var functionDocumentSeparator = regexp.MustCompile(`(:?^|\s*\n)---\s*`)
 // decodeManifestYAML decodes a YAML string containing one or more Kubernetes
 // manifests into a Tuple of objects. When validate is true, each document is
 // checked for the required apiVersion, kind and metadata fields.
-func decodeManifestYAML(ctx context.Context, manifest string, validate bool) (v types.Tuple, diags diag.Diagnostics) {
+func decodeManifestYAML(
+	ctx context.Context,
+	manifest string,
+	validate bool,
+) (v types.Tuple, diags diag.Diagnostics) {
 	docs := functionDocumentSeparator.Split(manifest, -1)
 	dtypes := []attr.Type{}
 	dvalues := []attr.Value{}

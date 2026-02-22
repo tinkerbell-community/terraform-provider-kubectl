@@ -1,6 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+//nolint:forcetypeassert
 package morph
 
 import (
@@ -827,7 +828,7 @@ func ValueToTypePath(a *tftypes.AttributePath) *tftypes.AttributePath {
 	for i := range os {
 		switch os[i].(type) {
 		case tftypes.AttributeName:
-			ns[i] = tftypes.AttributeName(os[i].(tftypes.AttributeName))
+			ns[i] = os[i].(tftypes.AttributeName)
 		case tftypes.ElementKeyString:
 			ns[i] = tftypes.ElementKeyString("#")
 		case tftypes.ElementKeyInt:

@@ -1,6 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+//nolint:forcetypeassert
 package kubectl
 
 import (
@@ -14,7 +15,10 @@ import (
 )
 
 // makeManifestDynamic builds a types.Dynamic value from a map of string->attr.Value.
-func makeManifestDynamic(attrTypes map[string]attr.Type, attrValues map[string]attr.Value) types.Dynamic {
+func makeManifestDynamic(
+	attrTypes map[string]attr.Type,
+	attrValues map[string]attr.Value,
+) types.Dynamic {
 	return types.DynamicValue(types.ObjectValueMust(attrTypes, attrValues))
 }
 
@@ -117,7 +121,9 @@ func TestBuildUnstructured(t *testing.T) {
 						),
 						"spec": types.ObjectValueMust(
 							map[string]attr.Type{"replicas": types.NumberType},
-							map[string]attr.Value{"replicas": types.NumberValue(mustNewBigFloat(3))},
+							map[string]attr.Value{
+								"replicas": types.NumberValue(mustNewBigFloat(3)),
+							},
 						),
 					},
 				),

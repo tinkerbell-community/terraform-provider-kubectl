@@ -71,7 +71,7 @@ func (p *kubectlProviderData) getOAPIv2Foundry() (api.Foundry, error) {
 			return nil, fmt.Errorf("failed get OpenAPI spec: %s", err)
 		}
 
-		rq := rc.Verb("GET").Timeout(30 * time.Second).AbsPath("openapi", "v2")
+		rq := rc.Verb("GET").Timeout(30*time.Second).AbsPath("openapi", "v2")
 		rs, err := rq.DoRaw(context.TODO())
 		if err != nil {
 			return nil, fmt.Errorf("failed get OpenAPI spec: %s", err)

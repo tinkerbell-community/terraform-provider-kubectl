@@ -1,3 +1,4 @@
+//nolint:forcetypeassert
 package kubectl
 
 import (
@@ -819,7 +820,12 @@ func (r *manifestResource) ImportState(
 		gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
 		objectType, typeHints, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
 		if err == nil && objectType != nil {
-			if importErr := r.readManifestWithOpenAPI(ctx, &model, objectType, typeHints); importErr != nil {
+			if importErr := r.readManifestWithOpenAPI(
+				ctx,
+				&model,
+				objectType,
+				typeHints,
+			); importErr != nil {
 				resp.Diagnostics.AddError(
 					"Failed to Import Resource",
 					fmt.Sprintf("Could not read resource from Kubernetes: %s", importErr),
@@ -1110,7 +1116,10 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 						// New field not in prior config
 						hasChanged = true
 					}
-					if nowCfg, restPath, walkErr := tftypes.WalkAttributePath(ppMan, ap); walkErr == nil {
+					if nowCfg, restPath, walkErr := tftypes.WalkAttributePath(
+						ppMan,
+						ap,
+					); walkErr == nil {
 						hasChanged = len(restPath.Steps()) == 0 &&
 							wasCfg.(tftypes.Value).IsKnown() &&
 							!wasCfg.(tftypes.Value).Equal(nowCfg.(tftypes.Value))
@@ -1312,7 +1321,13 @@ func (r *manifestResource) applyManifest(
 		}
 
 		if len(errorOnConditions) > 0 {
-			if err := r.waitWithErrorCheck(timeoutCtx, rs, waiter, name, errorOnConditions); err != nil {
+			if err := r.waitWithErrorCheck(
+				timeoutCtx,
+				rs,
+				waiter,
+				name,
+				errorOnConditions,
+			); err != nil {
 				return fmt.Errorf("failed to wait for rollout: %w", err)
 			}
 		} else {
@@ -1563,7 +1578,12 @@ func (r *manifestResource) readManifest(
 
 			objectType, typeHints, err := r.providerData.TFTypeFromOpenAPI(ctx, gvk, false)
 			if err == nil && objectType != nil {
-				if readErr := r.readManifestWithOpenAPI(ctx, model, objectType, typeHints); readErr != nil {
+				if readErr := r.readManifestWithOpenAPI(
+					ctx,
+					model,
+					objectType,
+					typeHints,
+				); readErr != nil {
 					// If OpenAPI read fails, fall back to basic read
 					log.Printf(
 						"[DEBUG] OpenAPI read failed, falling back to basic read: %v",

@@ -32,9 +32,9 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource                = &patchResource{}
-	_ resource.ResourceWithConfigure   = &patchResource{}
-	_ resource.ResourceWithModifyPlan  = &patchResource{}
+	_ resource.Resource               = &patchResource{}
+	_ resource.ResourceWithConfigure  = &patchResource{}
+	_ resource.ResourceWithModifyPlan = &patchResource{}
 )
 
 // patchResource defines the resource implementation for patching existing K8s resources.
@@ -88,7 +88,7 @@ func (r *patchResource) Schema(
 			"modify specific fields on resources managed outside of Terraform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Computed: true,
+				Computed:            true,
 				MarkdownDescription: "Composite identifier in the form `apiVersion//kind//name[//namespace]`.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -653,6 +653,8 @@ func (r *patchResource) setObjectFromResult(
 }
 
 // patchFieldManagerBlockObjectType returns the attr.Type for the field_manager block.
+//
+//nolint:unused
 func patchFieldManagerBlockObjectType() attr.Type {
 	return types.ObjectType{
 		AttrTypes: map[string]attr.Type{

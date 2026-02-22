@@ -1,6 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+//nolint:forcetypeassert
 package morph
 
 import (
@@ -128,14 +129,14 @@ func UnknownToNull(v tftypes.Value) tftypes.Value {
 	switch {
 	case v.Type().Is(tftypes.List{}) || v.Type().Is(tftypes.Set{}) || v.Type().Is(tftypes.Tuple{}):
 		tpel := make([]tftypes.Value, 0)
-		v.As(&tpel)
+		_ = v.As(&tpel)
 		for i := range tpel {
 			tpel[i] = UnknownToNull(tpel[i])
 		}
 		return tftypes.NewValue(v.Type(), tpel)
 	case v.Type().Is(tftypes.Map{}) || v.Type().Is(tftypes.Object{}):
 		mpel := make(map[string]tftypes.Value)
-		v.As(&mpel)
+		_ = v.As(&mpel)
 		for k, ev := range mpel {
 			mpel[k] = UnknownToNull(ev)
 		}

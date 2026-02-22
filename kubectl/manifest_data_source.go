@@ -236,7 +236,12 @@ func (d *manifestDataSource) Read(
 		if objectDynamic == nil {
 			resp.Diagnostics.AddError(
 				"Failed to convert API response",
-				fmt.Sprintf("Could not convert %s/%s %q to Terraform value", apiVersion, kind, name),
+				fmt.Sprintf(
+					"Could not convert %s/%s %q to Terraform value",
+					apiVersion,
+					kind,
+					name,
+				),
 			)
 			return
 		}

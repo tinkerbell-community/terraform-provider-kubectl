@@ -30,6 +30,8 @@ func symlinkFile(src string, dest string) error {
 
 // symlinkDir is a simplistic function for recursively symlinking all files in a directory to a new path.
 // It is intended only for limited internal use and does not cover all edge cases.
+//
+//nolint:unused
 func symlinkDir(srcDir string, destDir string) (err error) {
 	srcInfo, err := os.Stat(srcDir)
 	if err != nil {
@@ -42,7 +44,7 @@ func symlinkDir(srcDir string, destDir string) (err error) {
 	}
 
 	directory, _ := os.Open(srcDir)
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	objects, err := directory.Readdir(-1)
 
 	for _, obj := range objects {
@@ -84,7 +86,7 @@ func symlinkDirectoriesOnly(srcDir string, destDir string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	objects, err := directory.Readdir(-1)
 	if err != nil {
 		return err

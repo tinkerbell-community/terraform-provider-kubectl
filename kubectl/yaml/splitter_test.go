@@ -2,7 +2,7 @@ package yaml
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -98,7 +98,7 @@ func buildTestData(count int) (content string) {
 
 func readTestFile() (content string) {
 	path := "../_examples/cert-manager/01-cert-manager-crds.yaml"
-	file, err := ioutil.ReadFile(path)
+	file, err := os.ReadFile(path)
 	check(err)
 
 	return string(file)

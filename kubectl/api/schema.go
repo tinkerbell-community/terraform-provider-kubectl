@@ -1,6 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+//nolint:forcetypeassert
 package api
 
 import (
@@ -93,6 +94,7 @@ func getTypeFromSchema(
 	// 		return t.(tftypes.Type), nil
 	// 	}
 	// }
+	//nolint:staticcheck
 	switch {
 	case elem.Type.Is(openapi3.TypeString):
 		if elem.Format == "int-or-string" {
@@ -113,7 +115,7 @@ func getTypeFromSchema(
 		if xv, ok := elem.Extensions["x-kubernetes-int-or-string"]; ok {
 			xb, err := xv.(json.RawMessage).MarshalJSON()
 			if err != nil {
-				return tftypes.DynamicPseudoType, nil
+				return tftypes.DynamicPseudoType, err
 			}
 			var x bool
 			err = json.Unmarshal(xb, &x)

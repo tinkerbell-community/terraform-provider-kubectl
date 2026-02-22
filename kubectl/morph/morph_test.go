@@ -1001,15 +1001,11 @@ func TestMorphValueToTypeDiagnostics(t *testing.T) {
 func formatDiagnostics(diags []*tfprotov6.Diagnostic) string {
 	var b strings.Builder
 	for _, d := range diags {
-		b.WriteString(
-			fmt.Sprintf(
-				"<Severity> [%s] <Summary> [%s] <Detail> [%s] <Attribute> [%s]\n",
-				d.Severity,
-				d.Summary,
-				d.Detail,
-				d.Attribute,
-			),
-		)
+		fmt.Fprintf(&b, "<Severity> [%s] <Summary> [%s] <Detail> [%s] <Attribute> [%s]\n",
+			d.Severity,
+			d.Summary,
+			d.Detail,
+			d.Attribute)
 	}
 	return b.String()
 }

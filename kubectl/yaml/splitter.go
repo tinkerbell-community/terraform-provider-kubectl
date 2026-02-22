@@ -39,7 +39,7 @@ func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
 		rawYamlParsed := &map[string]any{}
 		err := yamlParser.Unmarshal([]byte(document), rawYamlParsed)
 		if err != nil {
-			return documents, fmt.Errorf("Error parsing yaml document: %v\n%v", err, document)
+			return documents, fmt.Errorf("error parsing yaml document: %v\n%v", err, document)
 		}
 
 		// skip empty yaml documents

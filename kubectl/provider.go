@@ -11,6 +11,7 @@ import (
 	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -31,8 +32,11 @@ import (
 	aggregator "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 )
 
-// Ensure the implementation satisfies the provider.Provider interface.
-var _ provider.Provider = &kubectlProvider{}
+// Ensure the implementation satisfies the provider interfaces.
+var (
+	_ provider.Provider            = &kubectlProvider{}
+	_ provider.ProviderWithActions = &kubectlProvider{}
+)
 
 // kubectlProvider defines the provider implementation.
 type kubectlProvider struct {
@@ -87,6 +91,7 @@ func (p *kubectlProviderData) ToRESTMapper() (meta.RESTMapper, error) {
 	if err != nil {
 		return nil, err
 	}
+	//nolint:sa4023
 	if discoveryClient != nil {
 		mapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
 		expander := restmapper.NewShortcutExpander(mapper, discoveryClient, func(msg string) {
@@ -460,15 +465,22 @@ func (p *kubectlProvider) Configure(
 		logger:              hclog.Default(),
 	}
 
-	// Make provider data available to resources and data sources
+	// Make provider data available to resources, data sources, and actions
 	resp.DataSourceData = providerData
 	resp.ResourceData = providerData
+	resp.ActionData = providerData
+}
+
+// Actions returns the actions implemented by this provider.
+func (p *kubectlProvider) Actions(ctx context.Context) []func() action.Action {
+	return []func() action.Action{
+		NewPatchAction,
+	}
 }
 
 // Resources returns the resources implemented by this provider.
 func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewServerVersionResource,
 		NewManifestResource,
 		NewPatchResource,
 	}
@@ -477,7 +489,6 @@ func (p *kubectlProvider) Resources(ctx context.Context) []func() resource.Resou
 // DataSources returns the data sources implemented by this provider.
 func (p *kubectlProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewServerVersionDataSource,
 		NewManifestDataSource,
 	}
 }

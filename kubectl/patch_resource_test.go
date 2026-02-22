@@ -45,7 +45,9 @@ func TestIntegration_Patch_AddLabel(t *testing.T) {
 			}
 			labels := cm.GetLabels()
 			if _, ok := labels["patched-by"]; ok {
-				return fmt.Errorf("expected label 'patched-by' to be removed after destroy, but it still exists")
+				return fmt.Errorf(
+					"expected label 'patched-by' to be removed after destroy, but it still exists",
+				)
 			}
 			return nil
 		},

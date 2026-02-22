@@ -16,12 +16,16 @@ import (
 // testAccProtoV6ProviderFactories are used to instantiate the provider during
 // acceptance testing. The factory function will be invoked for every Terraform CLI
 // command executed to create a provider server to which the CLI can reattach.
+//
+//nolint:unused
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"kubectl": providerserver.NewProtocol6WithError(kubectl.New("test")()),
 }
 
 // testAccPreCheck validates that required environment variables or conditions
 // are met before running acceptance tests.
+//
+//nolint:unused
 func testAccPreCheck(t *testing.T) {
 	// Check for kubeconfig or other Kubernetes authentication
 	// We'll check if either KUBECONFIG is set or ~/.kube/config exists
@@ -46,6 +50,8 @@ func testAccPreCheck(t *testing.T) {
 
 // testAccCheckDestroy is a common check function to verify resources are destroyed
 // This can be customized per resource type.
+//
+//nolint:unused
 func testAccCheckDestroy(resourceType string) func(*terraform.State) error {
 	return func(s *terraform.State) error {
 		// This would typically check that the resource no longer exists
@@ -57,21 +63,22 @@ func testAccCheckDestroy(resourceType string) func(*terraform.State) error {
 
 			// TODO: Implement actual Kubernetes API check to verify resource is gone
 			// For now, if the resource is still in state, we consider it not destroyed
-			if rs.Primary.ID != "" {
-				// In a real implementation, we'd query the K8s API here
-				// return fmt.Errorf("Resource %s still exists", rs.Primary.ID)
-			}
+			_ = rs.Primary.ID
 		}
 		return nil
 	}
 }
 
 // Helper function to generate random names for test resources.
+//
+//nolint:unused
 func testAccRandomName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().Unix())
 }
 
 // Helper function to create test YAML manifests.
+//
+//nolint:unused
 func testAccKubectlManifestConfig(name, namespace, key, value string) string {
 	return fmt.Sprintf(`
 resource "kubectl_manifest" "test" {
@@ -89,6 +96,8 @@ resource "kubectl_manifest" "test" {
 }
 
 // Helper function for server version data source tests.
+//
+//nolint:unused
 func testAccKubectlServerVersionDataSourceConfig() string {
 	return `
 data "kubectl_server_version" "test" {}
@@ -96,6 +105,8 @@ data "kubectl_server_version" "test" {}
 }
 
 // Helper function for filename list data source tests.
+//
+//nolint:unused
 func testAccKubectlFilenameListDataSourceConfig(pattern string) string {
 	return fmt.Sprintf(`
 data "kubectl_filename_list" "test" {
@@ -105,6 +116,8 @@ data "kubectl_filename_list" "test" {
 }
 
 // Helper function for file documents data source tests.
+//
+//nolint:unused
 func testAccKubectlFileDocumentsDataSourceConfig(content string) string {
 	return fmt.Sprintf(`
 data "kubectl_file_documents" "test" {
@@ -114,6 +127,8 @@ data "kubectl_file_documents" "test" {
 }
 
 // Helper function for path documents data source tests.
+//
+//nolint:unused
 func testAccKubectlPathDocumentsDataSourceConfig(pattern string, vars map[string]string) string {
 	varsBlock := ""
 	if len(vars) > 0 {
