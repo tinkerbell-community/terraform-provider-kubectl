@@ -91,15 +91,12 @@ func (p *kubectlProviderData) ToRESTMapper() (meta.RESTMapper, error) {
 	if err != nil {
 		return nil, err
 	}
-	//nolint:sa4023
-	if discoveryClient != nil {
-		mapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
-		expander := restmapper.NewShortcutExpander(mapper, discoveryClient, func(msg string) {
-			// Log warnings silently
-		})
-		return expander, nil
-	}
-	return nil, fmt.Errorf("no restmapper available")
+
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
+	expander := restmapper.NewShortcutExpander(mapper, discoveryClient, func(msg string) {
+		// Log warnings silently
+	})
+	return expander, nil
 }
 
 // New returns a new provider instance.

@@ -576,7 +576,11 @@ func (r *patchResource) revertPatch(
 		},
 	}
 	if !model.Namespace.IsNull() && model.Namespace.ValueString() != "" {
-		payload["metadata"].(map[string]any)["namespace"] = model.Namespace.ValueString()
+		metadata, ok := payload["metadata"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("metadata is not a map[string]any")
+		}
+		metadata["namespace"] = model.Namespace.ValueString()
 	}
 
 	jsonData, err := json.Marshal(payload)

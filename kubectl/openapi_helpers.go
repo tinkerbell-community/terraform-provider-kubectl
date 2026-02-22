@@ -107,7 +107,11 @@ func (p *kubectlProviderData) TFTypeFromOpenAPI(
 		)
 	}
 	if crdSchema != nil {
-		js, err := json.Marshal(api.SchemaToSpec("", crdSchema.(map[string]any)))
+		crdMap, ok := crdSchema.(map[string]any)
+		if !ok {
+			return nil, hints, fmt.Errorf("CRD schema is not a map[string]any: %T", crdSchema)
+		}
+		js, err := json.Marshal(api.SchemaToSpec("", crdMap))
 		if err != nil {
 			return nil, hints, fmt.Errorf("CRD schema fails to marshal into JSON: %s", err)
 		}
@@ -137,7 +141,10 @@ func (p *kubectlProviderData) TFTypeFromOpenAPI(
 	}
 	// remove "status" attribute from resource type
 	if tsch.Is(tftypes.Object{}) && !status {
-		ot := tsch.(tftypes.Object)
+		ot, ok := tsch.(tftypes.Object)
+		if !ok {
+			return nil, hints, fmt.Errorf("resource type is not a tftypes.Object: %T", tsch)
+		}
 		atts := make(map[string]tftypes.Type)
 		for k, t := range ot.AttributeTypes {
 			if k != "status" {
@@ -156,7 +163,11 @@ func (p *kubectlProviderData) TFTypeFromOpenAPI(
 		if err != nil {
 			return nil, hints, fmt.Errorf("failed to generate tftypes for v1.ObjectMeta: %s", err)
 		}
-		atts["metadata"] = metaType.(tftypes.Object)
+		mo, ok := metaType.(tftypes.Object)
+		if !ok {
+			return nil, hints, fmt.Errorf("ObjectMeta type is not a tftypes.Object: %T", metaType)
+		}
+		atts["metadata"] = mo
 
 		tsch = tftypes.Object{AttributeTypes: atts}
 	}
@@ -223,11 +234,18 @@ func (p *kubectlProviderData) lookUpGVKinCRDs(
 				continue
 			}
 		}
-		for _, rv := range ver.([]any) {
+		verList, ok := ver.([]any)
+		if !ok {
+			continue
+		}
+		for _, rv := range verList {
 			if rv == nil {
 				continue
 			}
-			v := rv.(map[string]any)
+			v, ok := rv.(map[string]any)
+			if !ok {
+				continue
+			}
 			if v["name"] == gvk.Version {
 				s, ok := v["schema"].(map[string]any)
 				if !ok {

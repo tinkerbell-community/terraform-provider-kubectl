@@ -147,9 +147,9 @@ func (h *Helper) NewWorkingDir(ctx context.Context, t TestControl) (*WorkingDir,
 
 	if tfAccLog != "" && tfLogCore != "" {
 		err = fmt.Errorf(
-			"Invalid environment variable configuration. Cannot set both TF_ACC_LOG and TF_LOG_CORE. " +
-				"Use TF_LOG_CORE and TF_LOG_PROVIDER to separately control the Terraform CLI logging subsystems. " +
-				"To control the Go standard library log package for the provider under test, use TF_LOG.",
+			"invalid environment variable configuration: cannot set both TF_ACC_LOG and TF_LOG_CORE; " +
+				"use TF_LOG_CORE and TF_LOG_PROVIDER to separately control the Terraform CLI logging subsystems; " +
+				"to control the Go standard library log package for the provider under test, use TF_LOG",
 		)
 		logging.HelperResourceError(ctx, err.Error())
 		return nil, err

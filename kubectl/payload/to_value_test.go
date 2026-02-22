@@ -388,8 +388,12 @@ func TestSliceToTFDynamicValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
+			v, ok := s.In.v.([]any)
+			if !ok {
+				t.Fatalf("In.v is not []any: %T", s.In.v)
+			}
 			r, err := sliceToTFDynamicValue(
-				s.In.v.([]any),
+				v,
 				s.In.t,
 				s.Hints,
 				tftypes.NewAttributePath(),
@@ -442,8 +446,12 @@ func TestSliceToTFTupleValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
+			v, ok := s.In.v.([]any)
+			if !ok {
+				t.Fatalf("In.v is not []any: %T", s.In.v)
+			}
 			r, err := sliceToTFTupleValue(
-				s.In.v.([]any),
+				v,
 				s.In.t,
 				s.Hints,
 				tftypes.NewAttributePath(),
@@ -493,7 +501,11 @@ func TestSliceToTFSetValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
-			r, err := sliceToTFSetValue(s.In.v.([]any), s.In.t, s.Hints, tftypes.NewAttributePath())
+			v, ok := s.In.v.([]any)
+			if !ok {
+				t.Fatalf("In.v is not []any: %T", s.In.v)
+			}
+			r, err := sliceToTFSetValue(v, s.In.t, s.Hints, tftypes.NewAttributePath())
 			if err != nil {
 				if s.Err == nil {
 					t.Logf("Unexpected error received for sample '%s': %s", name, err)
@@ -539,8 +551,12 @@ func TestSliceToTFListValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
+			v, ok := s.In.v.([]any)
+			if !ok {
+				t.Fatalf("In.v is not []any: %T", s.In.v)
+			}
 			r, err := sliceToTFListValue(
-				s.In.v.([]any),
+				v,
 				s.In.t,
 				s.Hints,
 				tftypes.NewAttributePath(),
@@ -595,8 +611,12 @@ func TestMapToTFMapValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
+			v, ok := s.In.v.(map[string]any)
+			if !ok {
+				t.Fatalf("In.v is not map[string]any: %T", s.In.v)
+			}
 			r, err := mapToTFMapValue(
-				s.In.v.(map[string]any),
+				v,
 				s.In.t,
 				s.Hints,
 				tftypes.NewAttributePath(),
@@ -659,8 +679,12 @@ func TestMapToTFObjectValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
+			v, ok := s.In.v.(map[string]any)
+			if !ok {
+				t.Fatalf("In.v is not map[string]any: %T", s.In.v)
+			}
 			r, err := mapToTFObjectValue(
-				s.In.v.(map[string]any),
+				v,
 				s.In.t,
 				s.Hints,
 				tftypes.NewAttributePath(),
@@ -697,8 +721,12 @@ func TestMapToTFDynamicValue(t *testing.T) {
 
 	for name, s := range samples {
 		t.Run(name, func(t *testing.T) {
+			v, ok := s.In.v.(map[string]any)
+			if !ok {
+				t.Fatalf("In.v is not map[string]any: %T", s.In.v)
+			}
 			r, err := mapToTFDynamicValue(
-				s.In.v.(map[string]any),
+				v,
 				s.In.t,
 				s.Hints,
 				tftypes.NewAttributePath(),

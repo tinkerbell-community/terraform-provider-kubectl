@@ -32,13 +32,18 @@ func TestNewFoundryFromSpecV3(t *testing.T) {
 		t.Fatalf("Error: %+v", err)
 	}
 
-	if f.(*foapiv3).doc == nil {
+	fv3, ok := f.(*foapiv3)
+	if !ok {
+		t.Fatalf("Error: expected *foapiv3")
+	}
+
+	if fv3.doc == nil {
 		t.Fail()
 	}
-	if f.(*foapiv3).doc.Components.Schemas == nil {
+	if fv3.doc.Components.Schemas == nil {
 		t.Fail()
 	}
-	crd, ok := f.(*foapiv3).doc.Components.Schemas["com.hashicorp.v1.TestCrd"]
+	crd, ok := fv3.doc.Components.Schemas["com.hashicorp.v1.TestCrd"]
 	if !ok {
 		t.Fail()
 	}
