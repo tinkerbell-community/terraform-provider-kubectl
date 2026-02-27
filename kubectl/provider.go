@@ -254,7 +254,7 @@ func (p *kubectlProvider) Configure(
 	req provider.ConfigureRequest,
 	resp *provider.ConfigureResponse,
 ) {
-	var config providerModel
+	var config util.ConfigData
 
 	diags := req.Config.Get(ctx, &config)
 	resp.Diagnostics.Append(diags...)
@@ -396,28 +396,7 @@ func (p *kubectlProvider) Configure(
 		}
 	}
 
-	// Initialize Kubernetes configuration
-	configData := util.ConfigData{
-		Host:                  config.Host,
-		Username:              config.Username,
-		Password:              config.Password,
-		Insecure:              config.Insecure,
-		ClientCertificate:     config.ClientCertificate,
-		ClientKey:             config.ClientKey,
-		ClusterCACertificate:  config.ClusterCACertificate,
-		ConfigPath:            config.ConfigPath,
-		ConfigPaths:           config.ConfigPaths,
-		ConfigContext:         config.ConfigContext,
-		ConfigContextAuthInfo: config.ConfigContextAuthInfo,
-		ConfigContextCluster:  config.ConfigContextCluster,
-		Token:                 config.Token,
-		ProxyURL:              config.ProxyURL,
-		LoadConfigFile:        config.LoadConfigFile,
-		TLSServerName:         config.TLSServerName,
-		Exec:                  config.Exec,
-	}
-
-	cfg, err := util.InitializeConfiguration(ctx, configData)
+	cfg, err := util.InitializeConfiguration(ctx, config)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Kubernetes Client",

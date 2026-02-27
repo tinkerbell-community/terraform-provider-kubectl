@@ -115,13 +115,6 @@ type manifestIdentityModel struct {
 	Namespace  types.String `tfsdk:"namespace"`
 }
 
-// waitBlockObjectType returns the attr.Type for the wait block.
-func waitBlockObjectType() attr.Type {
-	return types.ObjectType{
-		AttrTypes: waitBlockAttrTypes(),
-	}
-}
-
 // waitBlockAttrTypes returns the attribute types map for the wait block.
 func waitBlockAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
