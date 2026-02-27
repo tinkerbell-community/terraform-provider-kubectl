@@ -99,7 +99,7 @@ func anyToDynamic(ctx context.Context, v any) (types.Dynamic, diag.Diagnostics) 
 // encodeAttrValue converts attr.Value to any
 // Based on kubectl/functions/encode.go:encodeValue.
 func encodeAttrValue(v attr.Value) (any, error) {
-	if v.IsNull() {
+	if v.IsNull() || v.IsUnknown() {
 		return nil, nil
 	}
 
