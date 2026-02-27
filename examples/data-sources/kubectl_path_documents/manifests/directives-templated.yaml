@@ -1,2 +1,0 @@
-kind: MyAwesomeCRD
-MyYaml: Hello, %{ if name != "" }${name}%{ else }unnamed%{ endif }!
