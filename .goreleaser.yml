@@ -1,6 +1,8 @@
+version: 2
 before:
   hooks:
     - go mod tidy
+    - go generate ./...
 builds:
   - env:
       # goreleaser does not work with CGO, it could also complicate
@@ -13,10 +15,10 @@ builds:
     ldflags:
       - "-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}"
     goos:
-      # - windows
+      - windows
       - linux
       - darwin
-      # - freebsd
+      - freebsd
     goarch:
       - amd64
       - "386"
@@ -25,10 +27,11 @@ builds:
     ignore:
       - goos: darwin
         goarch: "386"
+      - goos: windows
+        goarch: arm
     binary: "{{ .ProjectName }}_v{{ .Version }}"
 archives:
-  - id: zip
-    format: zip
+  - formats: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
