@@ -60,17 +60,18 @@ type manifestResource struct {
 // (apiVersion, kind, metadata, spec, data, etc.) as a single Dynamic value,
 // aligning with the upstream hashicorp/terraform-provider-kubernetes pattern.
 type manifestResourceModel struct {
-	ID             types.String   `tfsdk:"id"`
-	Manifest       types.Dynamic  `tfsdk:"manifest"`
-	Status         types.Dynamic  `tfsdk:"status"`
-	Object         types.Dynamic  `tfsdk:"object"`
-	ComputedFields types.List     `tfsdk:"computed_fields"`
-	ApplyOnly      types.Bool     `tfsdk:"apply_only"`
-	DeleteCascade  types.String   `tfsdk:"delete_cascade"`
-	Wait           types.Object   `tfsdk:"wait"`
-	ErrorOn        types.Object   `tfsdk:"error_on"`
-	FieldManager   types.Object   `tfsdk:"field_manager"`
-	Timeouts       timeouts.Value `tfsdk:"timeouts"`
+	ID              types.String   `tfsdk:"id"`
+	Manifest        types.Dynamic  `tfsdk:"manifest"`
+	Status          types.Dynamic  `tfsdk:"status"`
+	Object          types.Dynamic  `tfsdk:"object"`
+	ComputedFields  types.List     `tfsdk:"computed_fields"`
+	ImmutableFields types.List     `tfsdk:"immutable_fields"`
+	ApplyOnly       types.Bool     `tfsdk:"apply_only"`
+	DeleteCascade   types.String   `tfsdk:"delete_cascade"`
+	Wait            types.Object   `tfsdk:"wait"`
+	ErrorOn         types.Object   `tfsdk:"error_on"`
+	FieldManager    types.Object   `tfsdk:"field_manager"`
+	Timeouts        timeouts.Value `tfsdk:"timeouts"`
 }
 
 // waitModel describes the wait block.
@@ -286,6 +287,13 @@ func (r *manifestResource) Schema(
 				Optional:    true,
 				MarkdownDescription: "List of manifest fields whose values may be altered by the API server during apply. " +
 					"Defaults to: `[\"metadata.annotations\", \"metadata.labels\"]`",
+			},
+			"immutable_fields": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				MarkdownDescription: "List of manifest field paths that are immutable after creation. " +
+					"If any of these fields change, the resource will be replaced (destroyed and re-created). " +
+					"Uses dot-separated paths (e.g., `spec.selector`).",
 			},
 			"apply_only": schema.BoolAttribute{
 				Optional:            true,
@@ -818,16 +826,17 @@ func (r *manifestResource) ImportState(
 	}
 
 	model := manifestResourceModel{
-		ID:             types.StringValue(req.ID),
-		Manifest:       manifestDynamic,
-		Status:         types.DynamicNull(),
-		Object:         types.DynamicNull(),
-		ComputedFields: types.ListNull(types.StringType),
-		ApplyOnly:      types.BoolValue(false),
-		DeleteCascade:  types.StringNull(),
-		Wait:           types.ObjectNull(waitBlockAttrTypes()),
-		ErrorOn:        types.ObjectNull(errorOnBlockAttrTypes()),
-		FieldManager:   types.ObjectNull(fieldManagerBlockAttrTypes()),
+		ID:              types.StringValue(req.ID),
+		Manifest:        manifestDynamic,
+		Status:          types.DynamicNull(),
+		Object:          types.DynamicNull(),
+		ComputedFields:  types.ListNull(types.StringType),
+		ImmutableFields: types.ListNull(types.StringType),
+		ApplyOnly:       types.BoolValue(false),
+		DeleteCascade:   types.StringNull(),
+		Wait:            types.ObjectNull(waitBlockAttrTypes()),
+		ErrorOn:         types.ObjectNull(errorOnBlockAttrTypes()),
+		FieldManager:    types.ObjectNull(fieldManagerBlockAttrTypes()),
 		Timeouts: timeouts.Value{
 			Object: types.ObjectNull(map[string]attr.Type{
 				"create": types.StringType,
@@ -964,6 +973,36 @@ func (r *manifestResource) ModifyPlan(
 	// Clear the IsImported flag after handling it (so subsequent plans behave normally)
 	if isImported && resp.Private != nil {
 		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "IsImported", []byte(`false`))...)
+	}
+
+	// Check immutable_fields — if any listed field changed, require replacement
+	if !plan.ImmutableFields.IsNull() && !plan.ImmutableFields.IsUnknown() {
+		var immutablePaths []string
+		plan.ImmutableFields.ElementsAs(ctx, &immutablePaths, false)
+		if len(immutablePaths) > 0 {
+			planMap, _ := dynamicToMap(ctx, plan.Manifest)
+			stateMap, _ := dynamicToMap(ctx, state.Manifest)
+			if planMap != nil && stateMap != nil {
+				for _, fieldPath := range immutablePaths {
+					atp, err := api.FieldPathToTftypesPath(fieldPath)
+					if err != nil {
+						resp.Diagnostics.AddAttributeWarning(
+							path.Root("immutable_fields"),
+							"Invalid immutable field path",
+							fmt.Sprintf("Could not parse path %q: %s", fieldPath, err),
+						)
+						continue
+					}
+					planVal, planOk := walkMapByTFPath(planMap, atp)
+					stateVal, stateOk := walkMapByTFPath(stateMap, atp)
+					if planOk && stateOk &&
+						fmt.Sprintf("%v", planVal) != fmt.Sprintf("%v", stateVal) {
+						resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
+						break
+					}
+				}
+			}
+		}
 	}
 
 	// Save original plan manifest before OpenAPI morphing for change detection.

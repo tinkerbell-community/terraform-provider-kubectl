@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -250,4 +251,46 @@ func deepReconcileSlices(prior, api []any) []any {
 		}
 	}
 	return result
+}
+
+// walkMapByTFPath extracts a value from a nested map using a tftypes.AttributePath.
+// Supports AttributeName (map key), ElementKeyString (map key), and ElementKeyInt (slice index).
+// Returns (value, true) if found, (nil, false) if any step fails to resolve.
+func walkMapByTFPath(m map[string]any, p *tftypes.AttributePath) (any, bool) {
+	var current any = m
+	for _, step := range p.Steps() {
+		switch s := step.(type) {
+		case tftypes.AttributeName:
+			cm, ok := current.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			current, ok = cm[string(s)]
+			if !ok {
+				return nil, false
+			}
+		case tftypes.ElementKeyString:
+			cm, ok := current.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			current, ok = cm[string(s)]
+			if !ok {
+				return nil, false
+			}
+		case tftypes.ElementKeyInt:
+			cl, ok := current.([]any)
+			if !ok {
+				return nil, false
+			}
+			idx := int(s)
+			if idx < 0 || idx >= len(cl) {
+				return nil, false
+			}
+			current = cl[idx]
+		default:
+			return nil, false
+		}
+	}
+	return current, true
 }

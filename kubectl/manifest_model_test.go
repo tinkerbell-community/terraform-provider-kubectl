@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -539,6 +540,257 @@ func TestRoundTripUnstructured(t *testing.T) {
 	}
 	if apiVersion != "apps/v1" {
 		t.Errorf("Expected apiVersion=apps/v1, got %v", apiVersion)
+	}
+}
+
+func TestWalkMapByTFPath(t *testing.T) {
+	nested := map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name":      "nginx",
+			"namespace": "default",
+			"labels": map[string]any{
+				"app":     "nginx",
+				"version": "1.0",
+			},
+		},
+		"spec": map[string]any{
+			"replicas": float64(3),
+			"selector": map[string]any{
+				"matchLabels": map[string]any{
+					"app": "nginx",
+				},
+			},
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name":  "nginx",
+							"image": "nginx:1.19",
+							"ports": []any{
+								map[string]any{"containerPort": float64(80)},
+								map[string]any{"containerPort": float64(443)},
+							},
+						},
+						map[string]any{
+							"name":  "sidecar",
+							"image": "sidecar:latest",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		m      map[string]any
+		path   *tftypes.AttributePath
+		want   any
+		wantOK bool
+	}{
+		{
+			name:   "top-level AttributeName",
+			m:      nested,
+			path:   tftypes.NewAttributePath().WithAttributeName("apiVersion"),
+			want:   "apps/v1",
+			wantOK: true,
+		},
+		{
+			name: "nested AttributeName two levels",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("metadata").
+				WithAttributeName("name"),
+			want:   "nginx",
+			wantOK: true,
+		},
+		{
+			name: "deeply nested AttributeName",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("selector").
+				WithAttributeName("matchLabels").
+				WithAttributeName("app"),
+			want:   "nginx",
+			wantOK: true,
+		},
+		{
+			name: "numeric value",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("replicas"),
+			want:   float64(3),
+			wantOK: true,
+		},
+		{
+			name: "ElementKeyInt for slice access",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("template").
+				WithAttributeName("spec").
+				WithAttributeName("containers").
+				WithElementKeyInt(0).
+				WithAttributeName("name"),
+			want:   "nginx",
+			wantOK: true,
+		},
+		{
+			name: "ElementKeyInt second element",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("template").
+				WithAttributeName("spec").
+				WithAttributeName("containers").
+				WithElementKeyInt(1).
+				WithAttributeName("image"),
+			want:   "sidecar:latest",
+			wantOK: true,
+		},
+		{
+			name: "ElementKeyInt nested slice",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("template").
+				WithAttributeName("spec").
+				WithAttributeName("containers").
+				WithElementKeyInt(0).
+				WithAttributeName("ports").
+				WithElementKeyInt(1).
+				WithAttributeName("containerPort"),
+			want:   float64(443),
+			wantOK: true,
+		},
+		{
+			name: "ElementKeyString as map key",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("metadata").
+				WithElementKeyString("labels").
+				WithElementKeyString("version"),
+			want:   "1.0",
+			wantOK: true,
+		},
+		{
+			name:   "missing top-level key",
+			m:      nested,
+			path:   tftypes.NewAttributePath().WithAttributeName("nonexistent"),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name: "missing nested key",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("metadata").
+				WithAttributeName("annotations"),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name: "ElementKeyInt out of bounds",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("template").
+				WithAttributeName("spec").
+				WithAttributeName("containers").
+				WithElementKeyInt(5),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name: "ElementKeyInt negative index",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("template").
+				WithAttributeName("spec").
+				WithAttributeName("containers").
+				WithElementKeyInt(-1),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name:   "ElementKeyInt on map (type mismatch)",
+			m:      nested,
+			path:   tftypes.NewAttributePath().WithAttributeName("metadata").WithElementKeyInt(0),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name: "AttributeName on slice (type mismatch)",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("spec").
+				WithAttributeName("template").
+				WithAttributeName("spec").
+				WithAttributeName("containers").
+				WithAttributeName("name"),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name:   "empty path returns input map",
+			m:      nested,
+			path:   tftypes.NewAttributePath(),
+			want:   nil, // special: we just check ok==true and got is a map
+			wantOK: true,
+		},
+		{
+			name:   "empty map",
+			m:      map[string]any{},
+			path:   tftypes.NewAttributePath().WithAttributeName("key"),
+			want:   nil,
+			wantOK: false,
+		},
+		{
+			name: "returns sub-map",
+			m:    nested,
+			path: tftypes.NewAttributePath().
+				WithAttributeName("metadata").
+				WithAttributeName("labels"),
+			want:   map[string]any{"app": "nginx", "version": "1.0"},
+			wantOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := walkMapByTFPath(tt.m, tt.path)
+			if ok != tt.wantOK {
+				t.Errorf("walkMapByTFPath() ok = %v, wantOK %v", ok, tt.wantOK)
+				return
+			}
+			if !tt.wantOK || tt.want == nil {
+				return
+			}
+			// For map comparisons, use a deeper check
+			if wantMap, isMap := tt.want.(map[string]any); isMap {
+				gotMap, gotIsMap := got.(map[string]any)
+				if !gotIsMap {
+					t.Errorf("walkMapByTFPath() = %v (type %T), want map", got, got)
+					return
+				}
+				if len(gotMap) != len(wantMap) {
+					t.Errorf("walkMapByTFPath() map len = %d, want %d", len(gotMap), len(wantMap))
+					return
+				}
+				for k, v := range wantMap {
+					if gotMap[k] != v {
+						t.Errorf("walkMapByTFPath() map[%s] = %v, want %v", k, gotMap[k], v)
+					}
+				}
+			} else if got != tt.want {
+				t.Errorf("walkMapByTFPath() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

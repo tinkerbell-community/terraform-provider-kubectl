@@ -1,15 +1,12 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-//go:build integration
-
 package kubectl_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -20,9 +17,12 @@ import (
 
 // TestIntegration_Patch_AddLabel patches an existing ConfigMap to add a label.
 func TestIntegration_Patch_AddLabel(t *testing.T) {
-	cmName := fmt.Sprintf("patch-label-%d", time.Now().UnixNano()%100000)
+	t.Parallel()
+
+	cmName := testAccRandomName("patch-label")
 
 	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
 		ProtoV6ProviderFactories: integrationProviderCfg,
 		Steps: []resource.TestStep{
 			{
@@ -56,9 +56,12 @@ func TestIntegration_Patch_AddLabel(t *testing.T) {
 
 // TestIntegration_Patch_AddAnnotation patches an existing ConfigMap to add an annotation.
 func TestIntegration_Patch_AddAnnotation(t *testing.T) {
-	cmName := fmt.Sprintf("patch-ann-%d", time.Now().UnixNano()%100000)
+	t.Parallel()
+
+	cmName := testAccRandomName("patch-ann")
 
 	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
 		ProtoV6ProviderFactories: integrationProviderCfg,
 		Steps: []resource.TestStep{
 			{
@@ -73,9 +76,12 @@ func TestIntegration_Patch_AddAnnotation(t *testing.T) {
 
 // TestIntegration_Patch_UpdatePatch changes the patch content and verifies the update.
 func TestIntegration_Patch_UpdatePatch(t *testing.T) {
-	cmName := fmt.Sprintf("patch-upd-%d", time.Now().UnixNano()%100000)
+	t.Parallel()
+
+	cmName := testAccRandomName("patch-upd")
 
 	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
 		ProtoV6ProviderFactories: integrationProviderCfg,
 		Steps: []resource.TestStep{
 			{
@@ -96,12 +102,15 @@ func TestIntegration_Patch_UpdatePatch(t *testing.T) {
 
 // TestIntegration_Patch_PatchSpec patches the spec of a Deployment to change replicas.
 func TestIntegration_Patch_PatchSpec(t *testing.T) {
-	deployName := fmt.Sprintf("patch-spec-%d", time.Now().UnixNano()%100000)
+	t.Parallel()
+
+	deployName := testAccRandomName("patch-spec")
 
 	// Pre-create the deployment outside of this test's Terraform config
 	createDeployment(t, deployName, "default", 1)
 
 	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
 		ProtoV6ProviderFactories: integrationProviderCfg,
 		Steps: []resource.TestStep{
 			{
@@ -119,9 +128,12 @@ func TestIntegration_Patch_PatchSpec(t *testing.T) {
 
 // TestIntegration_Patch_FieldManagerForceConflicts tests force_conflicts option.
 func TestIntegration_Patch_FieldManagerForceConflicts(t *testing.T) {
-	cmName := fmt.Sprintf("patch-fm-%d", time.Now().UnixNano()%100000)
+	t.Parallel()
+
+	cmName := testAccRandomName("patch-fm")
 
 	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
 		ProtoV6ProviderFactories: integrationProviderCfg,
 		Steps: []resource.TestStep{
 			{

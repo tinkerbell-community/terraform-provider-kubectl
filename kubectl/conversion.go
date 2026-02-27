@@ -22,6 +22,9 @@ func dynamicToMap(_ context.Context, d types.Dynamic) (map[string]any, diag.Diag
 	}
 
 	underlying := d.UnderlyingValue()
+	if underlying == nil {
+		return nil, nil
+	}
 	result, err := encodeAttrValue(underlying)
 	if err != nil {
 		return nil, diag.Diagnostics{diag.NewErrorDiagnostic(
@@ -52,6 +55,9 @@ func dynamicToAny(_ context.Context, d types.Dynamic) (any, diag.Diagnostics) {
 	}
 
 	underlying := d.UnderlyingValue()
+	if underlying == nil {
+		return nil, nil
+	}
 	result, err := encodeAttrValue(underlying)
 	if err != nil {
 		return nil, diag.Diagnostics{diag.NewErrorDiagnostic(
@@ -99,7 +105,7 @@ func anyToDynamic(ctx context.Context, v any) (types.Dynamic, diag.Diagnostics) 
 // encodeAttrValue converts attr.Value to any
 // Based on kubectl/functions/encode.go:encodeValue.
 func encodeAttrValue(v attr.Value) (any, error) {
-	if v.IsNull() || v.IsUnknown() {
+	if v == nil || v.IsNull() || v.IsUnknown() {
 		return nil, nil
 	}
 
@@ -107,7 +113,11 @@ func encodeAttrValue(v attr.Value) (any, error) {
 	case basetypes.StringValue:
 		return vv.ValueString(), nil
 	case basetypes.NumberValue:
-		f, _ := vv.ValueBigFloat().Float64()
+		bf := vv.ValueBigFloat()
+		if bf == nil {
+			return nil, nil
+		}
+		f, _ := bf.Float64()
 		return f, nil
 	case basetypes.BoolValue:
 		return vv.ValueBool(), nil
@@ -235,6 +245,9 @@ func decodeMapping(ctx context.Context, m map[string]any) (attr.Value, diag.Diag
 		if diags.HasError() {
 			return nil, diags
 		}
+		if vv == nil {
+			vv = types.DynamicNull()
+		}
 		vm[k] = vv
 		tm[k] = vv.Type(ctx)
 	}
@@ -250,6 +263,9 @@ func decodeSequence(ctx context.Context, s []any) (attr.Value, diag.Diagnostics)
 		vv, diags := decodeAny(ctx, v)
 		if diags.HasError() {
 			return nil, diags
+		}
+		if vv == nil {
+			vv = types.DynamicNull()
 		}
 		vl[i] = vv
 		tl[i] = vv.Type(ctx)
