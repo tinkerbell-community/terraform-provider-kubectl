@@ -24,7 +24,7 @@ func TestAccDataSourceKubectlManifest_configMap(t *testing.T) {
 				// Create a ConfigMap, then read it via data source
 				Config: testAccDataSourceConfigMap(name),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttrSet(resourceName, "object"),
+					resource.TestCheckResourceAttrSet(resourceName, "object.kind"),
 				),
 			},
 		},
@@ -42,7 +42,7 @@ func TestAccDataSourceKubectlManifest_namespace(t *testing.T) {
 			{
 				Config: testAccDataSourceNamespace("default"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttrSet(resourceName_dsNs, "object"),
+					resource.TestCheckResourceAttrSet(resourceName_dsNs, "object.kind"),
 				),
 			},
 		},
@@ -65,7 +65,10 @@ func TestAccDataSourceKubectlManifest_createdAndRead(t *testing.T) {
 				Config: testAccDataSourceCreatedAndRead(name),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("kubectl_manifest.test_ns", "id"),
-					resource.TestCheckResourceAttrSet("data.kubectl_manifest.read_ns", "object"),
+					resource.TestCheckResourceAttrSet(
+						"data.kubectl_manifest.read_ns",
+						"object.kind",
+					),
 				),
 			},
 		},
