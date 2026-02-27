@@ -750,6 +750,7 @@ resource "kubectl_manifest" "app_service" {
 - `delete_cascade` (String) Cascade mode for deletion: Background or Foreground. Default: Background
 - `error_on` (Block, Optional) Define error conditions that are checked continuously while waiting for success conditions. If any error condition matches, the apply fails immediately. Use this to detect error states such as CrashLoopBackOff or Failed status. (see [below for nested schema](#nestedblock--error_on))
 - `field_manager` (Block, Optional) Configure field manager options for server-side apply. (see [below for nested schema](#nestedblock--field_manager))
+- `immutable_fields` (List of String) List of manifest field paths that are immutable after creation. If any of these fields change, the resource will be replaced (destroyed and re-created). Uses dot-separated paths (e.g., `spec.selector`).
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `wait` (Block, Optional) Configure waiter options. The apply will block until success conditions are met or the timeout is reached. (see [below for nested schema](#nestedblock--wait))
 

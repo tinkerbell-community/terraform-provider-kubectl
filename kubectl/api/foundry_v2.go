@@ -133,8 +133,12 @@ func (f *foapiv2) buildGvkIndex() error {
 		if !ok {
 			continue
 		}
+		exBytes, err := json.Marshal(ex)
+		if err != nil {
+			return fmt.Errorf("failed to marshal GVK from OpenAPI schema extension: %v", err)
+		}
 		gvk := []schema.GroupVersionKind{}
-		err = json.Unmarshal(([]byte)(ex.(json.RawMessage)), &gvk)
+		err = json.Unmarshal(exBytes, &gvk)
 		if err != nil {
 			return fmt.Errorf("failed to unmarshall GVK from OpenAPI schema extension: %v", err)
 		}

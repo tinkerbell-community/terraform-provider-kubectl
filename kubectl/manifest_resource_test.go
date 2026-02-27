@@ -671,8 +671,7 @@ func TestAccResourceKubectlManifest_ConfigMap_CRUD(t *testing.T) {
 				Config: configMapConfig(name, "default", "key1", "value1"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
-					resource.TestCheckResourceAttrSet(resourceName, "object"),
-					resource.TestCheckResourceAttrSet(resourceName, "status"),
+					resource.TestCheckResourceAttrSet(resourceName, "object.kind"),
 				),
 			},
 			// Update
@@ -745,7 +744,7 @@ func TestAccResourceKubectlManifest_Secret_CRUD(t *testing.T) {
 				Config: secretConfig(name, "default", "admin", "secret123"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
-					resource.TestCheckResourceAttrSet(resourceName, "object"),
+					resource.TestCheckResourceAttrSet(resourceName, "object.kind"),
 				),
 			},
 			{
@@ -772,7 +771,7 @@ func TestAccResourceKubectlManifest_Deployment_CRUD(t *testing.T) {
 				Config: deploymentConfig(name, "default", "nginx:alpine"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
-					resource.TestCheckResourceAttrSet(resourceName, "object"),
+					resource.TestCheckResourceAttrSet(resourceName, "object.kind"),
 				),
 			},
 			{

@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 )
@@ -59,7 +60,9 @@ func (p *kubectlProviderData) getRestClient() (rest.Interface, error) {
 	}
 
 	return p.restClient.Get(func() (rest.Interface, error) {
-		return rest.UnversionedRESTClientFor(p.RestConfig)
+		cfg := rest.CopyConfig(p.RestConfig)
+		cfg.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+		return rest.UnversionedRESTClientFor(cfg)
 	})
 }
 
