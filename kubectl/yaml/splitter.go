@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	yamlParser "gopkg.in/yaml.v2"
+	k8syaml "sigs.k8s.io/yaml"
 )
 
 func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
@@ -37,7 +37,7 @@ func SplitMultiDocumentYAML(multidoc string) (documents []string, err error) {
 
 		// attempt to parse the document as yaml
 		rawYamlParsed := &map[string]any{}
-		err := yamlParser.Unmarshal([]byte(document), rawYamlParsed)
+		err := k8syaml.Unmarshal([]byte(document), rawYamlParsed)
 		if err != nil {
 			return documents, fmt.Errorf("error parsing yaml document: %v\n%v", err, document)
 		}

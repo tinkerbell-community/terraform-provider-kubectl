@@ -11,7 +11,6 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
-	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -27,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/thedevsaddam/gojsonq/v2"
 	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
@@ -67,8 +67,9 @@ type manifestResourceModel struct {
 	ComputedFields types.List     `tfsdk:"computed_fields"`
 	ApplyOnly      types.Bool     `tfsdk:"apply_only"`
 	DeleteCascade  types.String   `tfsdk:"delete_cascade"`
-	Wait           types.List     `tfsdk:"wait"`
-	FieldManager   types.List     `tfsdk:"field_manager"`
+	Wait           types.Object   `tfsdk:"wait"`
+	ErrorOn        types.Object   `tfsdk:"error_on"`
+	FieldManager   types.Object   `tfsdk:"field_manager"`
 	Timeouts       timeouts.Value `tfsdk:"timeouts"`
 }
 
@@ -77,7 +78,6 @@ type waitModel struct {
 	Rollout    types.Bool `tfsdk:"rollout"`
 	Fields     types.List `tfsdk:"field"`
 	Conditions types.List `tfsdk:"condition"`
-	ErrorOn    types.List `tfsdk:"error_on"`
 }
 
 // waitFieldModel describes a field matcher in the wait block.
@@ -93,12 +93,12 @@ type waitConditionModel struct {
 	Status types.String `tfsdk:"status"`
 }
 
-// waitErrorOnModel describes an error_on condition in the wait block.
-// If a matched condition is detected, the apply fails immediately.
-type waitErrorOnModel struct {
-	Key     types.String `tfsdk:"key"`
-	Value   types.String `tfsdk:"value"`
-	Message types.String `tfsdk:"message"`
+// errorOnModel describes the error_on block.
+// Error conditions are checked continuously while waiting for success conditions.
+// If any error condition matches, the apply fails immediately.
+type errorOnModel struct {
+	Fields     types.List `tfsdk:"field"`
+	Conditions types.List `tfsdk:"condition"`
 }
 
 // fieldManagerModel describes the field_manager block.
@@ -115,43 +115,71 @@ type manifestIdentityModel struct {
 	Namespace  types.String `tfsdk:"namespace"`
 }
 
-// waitBlockObjectType returns the attr.Type for the wait block element type.
-// This is needed to create properly typed null/empty lists for blocks.
+// waitBlockObjectType returns the attr.Type for the wait block.
 func waitBlockObjectType() attr.Type {
 	return types.ObjectType{
-		AttrTypes: map[string]attr.Type{
-			"rollout": types.BoolType,
-			"field": types.ListType{ElemType: types.ObjectType{
-				AttrTypes: map[string]attr.Type{
-					"key":        types.StringType,
-					"value":      types.StringType,
-					"value_type": types.StringType,
-				},
-			}},
-			"condition": types.ListType{ElemType: types.ObjectType{
-				AttrTypes: map[string]attr.Type{
-					"type":   types.StringType,
-					"status": types.StringType,
-				},
-			}},
-			"error_on": types.ListType{ElemType: types.ObjectType{
-				AttrTypes: map[string]attr.Type{
-					"key":     types.StringType,
-					"value":   types.StringType,
-					"message": types.StringType,
-				},
-			}},
-		},
+		AttrTypes: waitBlockAttrTypes(),
 	}
 }
 
-// fieldManagerBlockObjectType returns the attr.Type for the field_manager block element type.
+// waitBlockAttrTypes returns the attribute types map for the wait block.
+func waitBlockAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"rollout": types.BoolType,
+		"field": types.ListType{ElemType: types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"key":        types.StringType,
+				"value":      types.StringType,
+				"value_type": types.StringType,
+			},
+		}},
+		"condition": types.ListType{ElemType: types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"type":   types.StringType,
+				"status": types.StringType,
+			},
+		}},
+	}
+}
+
+// errorOnBlockObjectType returns the attr.Type for the error_on block.
+func errorOnBlockObjectType() attr.Type {
+	return types.ObjectType{
+		AttrTypes: errorOnBlockAttrTypes(),
+	}
+}
+
+// errorOnBlockAttrTypes returns the attribute types map for the error_on block.
+func errorOnBlockAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"field": types.ListType{ElemType: types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"key":        types.StringType,
+				"value":      types.StringType,
+				"value_type": types.StringType,
+			},
+		}},
+		"condition": types.ListType{ElemType: types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"type":   types.StringType,
+				"status": types.StringType,
+			},
+		}},
+	}
+}
+
+// fieldManagerBlockObjectType returns the attr.Type for the field_manager block.
 func fieldManagerBlockObjectType() attr.Type {
 	return types.ObjectType{
-		AttrTypes: map[string]attr.Type{
-			"name":            types.StringType,
-			"force_conflicts": types.BoolType,
-		},
+		AttrTypes: fieldManagerBlockAttrTypes(),
+	}
+}
+
+// fieldManagerBlockAttrTypes returns the attribute types map for the field_manager block.
+func fieldManagerBlockAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"name":            types.StringType,
+		"force_conflicts": types.BoolType,
 	}
 }
 
@@ -304,103 +332,118 @@ func (r *manifestResource) Schema(
 			}),
 		},
 		Blocks: map[string]schema.Block{
-			"wait": schema.ListNestedBlock{
-				MarkdownDescription: "Configure waiter options.",
-				Validators: []validator.List{
-					listvalidator.SizeAtMost(1),
+			"wait": schema.SingleNestedBlock{
+				MarkdownDescription: "Configure waiter options. The apply will block until success conditions are met or the timeout is reached.",
+				Attributes: map[string]schema.Attribute{
+					"rollout": schema.BoolAttribute{
+						Optional:            true,
+						MarkdownDescription: "Wait for rollout to complete on resources that support `kubectl rollout status`.",
+					},
 				},
-				NestedObject: schema.NestedBlockObject{
-					Attributes: map[string]schema.Attribute{
-						"rollout": schema.BoolAttribute{
-							Optional:            true,
-							MarkdownDescription: "Wait for rollout to complete on resources that support `kubectl rollout status`.",
+				Blocks: map[string]schema.Block{
+					"field": schema.ListNestedBlock{
+						MarkdownDescription: "Wait for a resource field to reach an expected value. " +
+							"Multiple `field` blocks can be specified; all must match.",
+						NestedObject: schema.NestedBlockObject{
+							Attributes: map[string]schema.Attribute{
+								"key": schema.StringAttribute{
+									Required:            true,
+									MarkdownDescription: "JSON path to the field to check (e.g., `status.phase`, `status.podIP`).",
+								},
+								"value": schema.StringAttribute{
+									Required:            true,
+									MarkdownDescription: "The expected value or regex pattern to match.",
+								},
+								"value_type": schema.StringAttribute{
+									Optional:            true,
+									Computed:            true,
+									Default:             stringdefault.StaticString("eq"),
+									MarkdownDescription: "Comparison type: `eq` for exact match (default) or `regex` for regular expression matching.",
+									Validators: []validator.String{
+										stringvalidator.OneOf("eq", "regex"),
+									},
+								},
+							},
 						},
 					},
-					Blocks: map[string]schema.Block{
-						"field": schema.ListNestedBlock{
-							MarkdownDescription: "Wait for a resource field to reach an expected value. " +
-								"Multiple `field` blocks can be specified; all must match.",
-							NestedObject: schema.NestedBlockObject{
-								Attributes: map[string]schema.Attribute{
-									"key": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "JSON path to the field to check (e.g., `status.phase`, `status.podIP`).",
-									},
-									"value": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "The expected value or regex pattern to match.",
-									},
-									"value_type": schema.StringAttribute{
-										Optional:            true,
-										Computed:            true,
-										Default:             stringdefault.StaticString("eq"),
-										MarkdownDescription: "Comparison type: `eq` for exact match (default) or `regex` for regular expression matching.",
-										Validators: []validator.String{
-											stringvalidator.OneOf("eq", "regex"),
-										},
-									},
+					"condition": schema.ListNestedBlock{
+						MarkdownDescription: "Wait for status conditions to match.",
+						NestedObject: schema.NestedBlockObject{
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "The type of condition.",
 								},
-							},
-						},
-						"condition": schema.ListNestedBlock{
-							MarkdownDescription: "Wait for status conditions to match.",
-							NestedObject: schema.NestedBlockObject{
-								Attributes: map[string]schema.Attribute{
-									"type": schema.StringAttribute{
-										Optional:            true,
-										MarkdownDescription: "The type of condition.",
-									},
-									"status": schema.StringAttribute{
-										Optional:            true,
-										MarkdownDescription: "The condition status.",
-									},
-								},
-							},
-						},
-						"error_on": schema.ListNestedBlock{
-							MarkdownDescription: "Fail the apply immediately if any of these conditions are detected. " +
-								"Use this to detect error states during waiting, such as CrashLoopBackOff or Failed status. " +
-								"The `key` is a JSON path (e.g., `status.containerStatuses.0.state.waiting.reason`) and " +
-								"`value` is a regex pattern matched against the field value.",
-							NestedObject: schema.NestedBlockObject{
-								Attributes: map[string]schema.Attribute{
-									"key": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "JSON path to the field to check (e.g., `status.phase`, `status.conditions.0.reason`).",
-									},
-									"value": schema.StringAttribute{
-										Required:            true,
-										MarkdownDescription: "Regex pattern to match against the field value. If matched, the apply fails immediately.",
-									},
-									"message": schema.StringAttribute{
-										Optional:            true,
-										MarkdownDescription: "Custom error message to display when this error condition is matched.",
-									},
+								"status": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "The condition status.",
 								},
 							},
 						},
 					},
 				},
 			},
-			"field_manager": schema.ListNestedBlock{
-				MarkdownDescription: "Configure field manager options for server-side apply.",
-				Validators: []validator.List{
-					listvalidator.SizeAtMost(1),
+			"error_on": schema.SingleNestedBlock{
+				MarkdownDescription: "Define error conditions that are checked continuously while waiting for success conditions. " +
+					"If any error condition matches, the apply fails immediately. " +
+					"Use this to detect error states such as CrashLoopBackOff or Failed status.",
+				Blocks: map[string]schema.Block{
+					"field": schema.ListNestedBlock{
+						MarkdownDescription: "Fail if a resource field matches an error pattern. " +
+							"Multiple `field` blocks can be specified; any match triggers failure.",
+						NestedObject: schema.NestedBlockObject{
+							Attributes: map[string]schema.Attribute{
+								"key": schema.StringAttribute{
+									Required:            true,
+									MarkdownDescription: "JSON path to the field to check (e.g., `status.containerStatuses.0.state.waiting.reason`).",
+								},
+								"value": schema.StringAttribute{
+									Required:            true,
+									MarkdownDescription: "Regex pattern to match against the field value. If matched, the apply fails immediately.",
+								},
+								"value_type": schema.StringAttribute{
+									Optional:            true,
+									Computed:            true,
+									Default:             stringdefault.StaticString("regex"),
+									MarkdownDescription: "Comparison type: `eq` for exact match or `regex` for regular expression matching (default).",
+									Validators: []validator.String{
+										stringvalidator.OneOf("eq", "regex"),
+									},
+								},
+							},
+						},
+					},
+					"condition": schema.ListNestedBlock{
+						MarkdownDescription: "Fail if a status condition matches. Any match triggers failure.",
+						NestedObject: schema.NestedBlockObject{
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "The type of condition to check.",
+								},
+								"status": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "The condition status to match.",
+								},
+							},
+						},
+					},
 				},
-				NestedObject: schema.NestedBlockObject{
-					Attributes: map[string]schema.Attribute{
-						"name": schema.StringAttribute{
-							Optional:            true,
-							Computed:            true,
-							Default:             stringdefault.StaticString("Terraform"),
-							MarkdownDescription: "The name to use for the field manager when applying server-side. Default: Terraform",
-						},
-						"force_conflicts": schema.BoolAttribute{
-							Optional:            true,
-							Computed:            true,
-							Default:             booldefault.StaticBool(false),
-							MarkdownDescription: "Force changes against conflicts. Default: false",
-						},
+			},
+			"field_manager": schema.SingleNestedBlock{
+				MarkdownDescription: "Configure field manager options for server-side apply.",
+				Attributes: map[string]schema.Attribute{
+					"name": schema.StringAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             stringdefault.StaticString("Terraform"),
+						MarkdownDescription: "The name to use for the field manager when applying server-side. Default: Terraform",
+					},
+					"force_conflicts": schema.BoolAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             booldefault.StaticBool(false),
+						MarkdownDescription: "Force changes against conflicts. Default: false",
 					},
 				},
 			},
@@ -487,11 +530,10 @@ func (r *manifestResource) ValidateConfig(
 
 	// Validate wait block — only one waiter type allowed
 	if !config.Wait.IsNull() && !config.Wait.IsUnknown() {
-		var waitModels []waitModel
-		d := config.Wait.ElementsAs(ctx, &waitModels, false)
+		var w waitModel
+		d := config.Wait.As(ctx, &w, basetypes.ObjectAsOptions{})
 		resp.Diagnostics.Append(d...)
-		if !resp.Diagnostics.HasError() && len(waitModels) > 0 {
-			w := waitModels[0]
+		if !resp.Diagnostics.HasError() {
 			waiters := 0
 			if !w.Rollout.IsNull() && w.Rollout.ValueBool() {
 				waiters++
@@ -804,8 +846,9 @@ func (r *manifestResource) ImportState(
 		ComputedFields: types.ListNull(types.StringType),
 		ApplyOnly:      types.BoolValue(false),
 		DeleteCascade:  types.StringNull(),
-		Wait:           types.ListNull(waitBlockObjectType()),
-		FieldManager:   types.ListNull(fieldManagerBlockObjectType()),
+		Wait:           types.ObjectNull(waitBlockAttrTypes()),
+		ErrorOn:        types.ObjectNull(errorOnBlockAttrTypes()),
+		FieldManager:   types.ObjectNull(fieldManagerBlockAttrTypes()),
 		Timeouts: timeouts.Value{
 			Object: types.ObjectNull(map[string]attr.Type{
 				"create": types.StringType,
@@ -1224,7 +1267,8 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 }
 
 // applyManifest applies the manifest to Kubernetes using server-side apply,
-// then handles wait conditions including error_on.
+// then handles wait conditions. error_on conditions are checked continuously
+// while waiting for success conditions to be met.
 func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
@@ -1248,18 +1292,38 @@ func (r *manifestResource) applyManifest(
 	// Restore user-provided manifest to maintain type compatibility with plan
 	model.Manifest = plannedManifest
 
-	// Handle wait block if specified
-	if model.Wait.IsNull() || model.Wait.IsUnknown() {
-		return nil
+	// Parse error_on conditions from top-level block
+	var errorOnFields []waitFieldModel
+	var errorOnConditions []waitConditionModel
+	hasErrorOn := false
+	if !model.ErrorOn.IsNull() && !model.ErrorOn.IsUnknown() {
+		var errOn errorOnModel
+		d := model.ErrorOn.As(ctx, &errOn, basetypes.ObjectAsOptions{})
+		if !d.HasError() {
+			if !errOn.Fields.IsNull() && !errOn.Fields.IsUnknown() {
+				errOn.Fields.ElementsAs(ctx, &errorOnFields, false)
+			}
+			if !errOn.Conditions.IsNull() && !errOn.Conditions.IsUnknown() {
+				errOn.Conditions.ElementsAs(ctx, &errorOnConditions, false)
+			}
+			hasErrorOn = len(errorOnFields) > 0 || len(errorOnConditions) > 0
+		}
 	}
 
-	var waitModels []waitModel
-	diags := model.Wait.ElementsAs(ctx, &waitModels, false)
-	if diags.HasError() || len(waitModels) == 0 {
-		return nil
+	// Parse wait block if specified
+	hasWait := false
+	var wait waitModel
+	if !model.Wait.IsNull() && !model.Wait.IsUnknown() {
+		d := model.Wait.As(ctx, &wait, basetypes.ObjectAsOptions{})
+		if !d.HasError() {
+			hasWait = true
+		}
 	}
 
-	wait := waitModels[0]
+	// Nothing to wait for or check
+	if !hasWait && !hasErrorOn {
+		return nil
+	}
 
 	createTimeout, d := model.Timeouts.Create(ctx, 10*time.Minute)
 	if d.HasError() {
@@ -1276,12 +1340,6 @@ func (r *manifestResource) applyManifest(
 	kindAny, _ := extractManifestField(ctx, model.Manifest, "kind")
 	kind := fmt.Sprintf("%v", kindAny)
 	apiVersion := fmt.Sprintf("%v", apiVersionAny)
-
-	// Check error_on conditions first during wait
-	var errorOnConditions []waitErrorOnModel
-	if !wait.ErrorOn.IsNull() {
-		wait.ErrorOn.ElementsAs(ctx, &errorOnConditions, false)
-	}
 
 	// Get dynamic client resource interface for waiters
 	getResourceInterface := func() (dynamic.ResourceInterface, error) {
@@ -1306,7 +1364,7 @@ func (r *manifestResource) applyManifest(
 	}
 
 	// Handle rollout wait using RolloutWaiter (polymorphichelpers)
-	if !wait.Rollout.IsNull() && wait.Rollout.ValueBool() {
+	if hasWait && !wait.Rollout.IsNull() && wait.Rollout.ValueBool() {
 		log.Printf("[INFO] Waiting for rollout of %s/%s", kind, name)
 
 		rs, err := getResourceInterface()
@@ -1320,12 +1378,13 @@ func (r *manifestResource) applyManifest(
 			Logger:       r.providerData.logger,
 		}
 
-		if len(errorOnConditions) > 0 {
+		if hasErrorOn {
 			if err := r.waitWithErrorCheck(
 				timeoutCtx,
 				rs,
 				waiter,
 				name,
+				errorOnFields,
 				errorOnConditions,
 			); err != nil {
 				return fmt.Errorf("failed to wait for rollout: %w", err)
@@ -1341,13 +1400,14 @@ func (r *manifestResource) applyManifest(
 
 	// Handle condition and field waits
 	var conditions []waitConditionModel
-	if !wait.Conditions.IsNull() {
-		wait.Conditions.ElementsAs(ctx, &conditions, false)
-	}
-
 	var waitFields []waitFieldModel
-	if !wait.Fields.IsNull() {
-		wait.Fields.ElementsAs(ctx, &waitFields, false)
+	if hasWait {
+		if !wait.Conditions.IsNull() {
+			wait.Conditions.ElementsAs(ctx, &conditions, false)
+		}
+		if !wait.Fields.IsNull() {
+			wait.Fields.ElementsAs(ctx, &waitFields, false)
+		}
 	}
 
 	if len(conditions) > 0 || len(waitFields) > 0 {
@@ -1422,8 +1482,15 @@ func (r *manifestResource) applyManifest(
 		)
 
 		// Run waiter with error_on checking if configured
-		if len(errorOnConditions) > 0 {
-			err = r.waitWithErrorCheck(timeoutCtx, rs, waiter, name, errorOnConditions)
+		if hasErrorOn {
+			err = r.waitWithErrorCheck(
+				timeoutCtx,
+				rs,
+				waiter,
+				name,
+				errorOnFields,
+				errorOnConditions,
+			)
 		} else {
 			err = waiter.Wait(timeoutCtx)
 		}
@@ -1433,52 +1500,109 @@ func (r *manifestResource) applyManifest(
 		}
 
 		log.Printf("[INFO] Conditions/fields met for %s/%s", kind, name)
-	} else if len(errorOnConditions) > 0 {
-		// error_on conditions without any other waiter — check once
+	} else if hasErrorOn {
+		// error_on conditions without any wait block — check once
 		rs, err := getResourceInterface()
 		if err != nil {
 			return fmt.Errorf("failed to set up error_on check: %w", err)
 		}
 
-		res, err := rs.Get(ctx, name, meta_v1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get resource for error_on check: %w", err)
+		if err := checkErrorOnConditions(
+			ctx,
+			rs,
+			name,
+			errorOnFields,
+			errorOnConditions,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkErrorOnConditions checks error_on field and condition matchers against the current resource state.
+// Returns an error if any error condition is matched.
+func checkErrorOnConditions(
+	ctx context.Context,
+	rs dynamic.ResourceInterface,
+	name string,
+	errorFields []waitFieldModel,
+	errorConditions []waitConditionModel,
+) error {
+	res, err := rs.Get(ctx, name, meta_v1.GetOptions{})
+	if err != nil {
+		return nil // Can't check, don't fail
+	}
+
+	yamlJSON, err := res.MarshalJSON()
+	if err != nil {
+		return nil
+	}
+
+	jsonStr := string(yamlJSON)
+
+	// Check field matchers
+	for _, f := range errorFields {
+		key := f.Key.ValueString()
+		value := f.Value.ValueString()
+		valueType := "regex"
+		if !f.ValueType.IsNull() && f.ValueType.ValueString() != "" {
+			valueType = f.ValueType.ValueString()
 		}
 
-		yamlJSON, err := res.MarshalJSON()
-		if err != nil {
-			return fmt.Errorf("failed to marshal resource for error_on check: %w", err)
+		v := gojsonq.New().FromString(jsonStr).Find(key)
+		if v == nil {
+			continue
 		}
 
-		for _, e := range errorOnConditions {
-			key := e.Key.ValueString()
-			value := e.Value.ValueString()
+		stringVal := fmt.Sprintf("%v", v)
+		var matched bool
+		if valueType == "eq" {
+			matched = stringVal == value
+		} else {
+			matched, err = regexp.MatchString(value, stringVal)
+			if err != nil {
+				return fmt.Errorf("error_on: invalid regex %q: %w", value, err)
+			}
+		}
 
-			v := gojsonq.New().FromString(string(yamlJSON)).Find(key)
-			if v == nil {
+		if matched {
+			return fmt.Errorf(
+				"error condition met for %s: field %s=%s matched pattern %s",
+				name, key, stringVal, value,
+			)
+		}
+	}
+
+	// Check condition matchers
+	for _, c := range errorConditions {
+		condType := c.Type.ValueString()
+		condStatus := c.Status.ValueString()
+
+		conditionsVal := gojsonq.New().FromString(jsonStr).Find("status.conditions")
+		if conditionsVal == nil {
+			continue
+		}
+
+		condSlice, ok := conditionsVal.([]any)
+		if !ok {
+			continue
+		}
+
+		for _, cond := range condSlice {
+			condMap, ok := cond.(map[string]any)
+			if !ok {
 				continue
 			}
-
-			stringVal := fmt.Sprintf("%v", v)
-			matched, matchErr := regexp.MatchString(value, stringVal)
-			if matchErr != nil {
-				return fmt.Errorf("error_on: invalid regex %q: %w", value, matchErr)
-			}
-
-			if matched {
-				msg := ""
-				if !e.Message.IsNull() {
-					msg = e.Message.ValueString()
-				}
-				if msg != "" {
-					return fmt.Errorf(
-						"error condition met for %s: %s (key=%s, value=%s matched pattern %s)",
-						name, msg, key, stringVal, value,
-					)
-				}
+			t, _ := condMap["type"].(string)
+			s, _ := condMap["status"].(string)
+			if (condType == "" || t == condType) && (condStatus == "" || s == condStatus) {
+				reason, _ := condMap["reason"].(string)
+				message, _ := condMap["message"].(string)
 				return fmt.Errorf(
-					"error condition met for %s: key=%s value=%s matched pattern %s",
-					name, key, stringVal, value,
+					"error condition met for %s: condition type=%s status=%s reason=%s message=%s",
+					name, t, s, reason, message,
 				)
 			}
 		}
@@ -1493,7 +1617,8 @@ func (r *manifestResource) waitWithErrorCheck(
 	rs dynamic.ResourceInterface,
 	waiter api.Waiter,
 	name string,
-	errorOnConditions []waitErrorOnModel,
+	errorFields []waitFieldModel,
+	errorConditions []waitConditionModel,
 ) error {
 	errCh := make(chan error, 1)
 
@@ -1511,48 +1636,14 @@ func (r *manifestResource) waitWithErrorCheck(
 		case err := <-errCh:
 			return err
 		case <-ticker.C:
-			// Check error conditions
-			res, err := rs.Get(ctx, name, meta_v1.GetOptions{})
-			if err != nil {
-				continue
-			}
-
-			yamlJSON, err := res.MarshalJSON()
-			if err != nil {
-				continue
-			}
-
-			for _, e := range errorOnConditions {
-				key := e.Key.ValueString()
-				value := e.Value.ValueString()
-
-				v := gojsonq.New().FromString(string(yamlJSON)).Find(key)
-				if v == nil {
-					continue
-				}
-
-				stringVal := fmt.Sprintf("%v", v)
-				matched, matchErr := regexp.MatchString(value, stringVal)
-				if matchErr != nil {
-					return fmt.Errorf("error_on: invalid regex %q: %w", value, matchErr)
-				}
-
-				if matched {
-					msg := ""
-					if !e.Message.IsNull() {
-						msg = e.Message.ValueString()
-					}
-					if msg != "" {
-						return fmt.Errorf(
-							"error condition met for %s: %s (key=%s, value=%s matched pattern %s)",
-							name, msg, key, stringVal, value,
-						)
-					}
-					return fmt.Errorf(
-						"error condition met for %s: key=%s value=%s matched pattern %s",
-						name, key, stringVal, value,
-					)
-				}
+			if err := checkErrorOnConditions(
+				ctx,
+				rs,
+				name,
+				errorFields,
+				errorConditions,
+			); err != nil {
+				return err
 			}
 		case <-ctx.Done():
 			return fmt.Errorf("%s timed out waiting for resource", name)

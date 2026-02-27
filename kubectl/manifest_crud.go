@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
 	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -38,18 +39,16 @@ func (r *manifestResource) applyManifestV2(
 	forceConflicts := false
 
 	if !model.FieldManager.IsNull() {
-		var fmModels []fieldManagerModel
-		diags := model.FieldManager.ElementsAs(ctx, &fmModels, false)
+		var fm fieldManagerModel
+		diags := model.FieldManager.As(ctx, &fm, basetypes.ObjectAsOptions{})
 		if diags.HasError() {
 			return fmt.Errorf("failed to parse field_manager: %v", diags)
 		}
-		if len(fmModels) > 0 {
-			if !fmModels[0].Name.IsNull() {
-				fieldManagerName = fmModels[0].Name.ValueString()
-			}
-			if !fmModels[0].ForceConflicts.IsNull() {
-				forceConflicts = fmModels[0].ForceConflicts.ValueBool()
-			}
+		if !fm.Name.IsNull() {
+			fieldManagerName = fm.Name.ValueString()
+		}
+		if !fm.ForceConflicts.IsNull() {
+			forceConflicts = fm.ForceConflicts.ValueBool()
 		}
 	}
 

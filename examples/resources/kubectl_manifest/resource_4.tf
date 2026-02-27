@@ -1,13 +1,16 @@
+# ServiceAccount with computed fields for controller-managed annotations
 resource "kubectl_manifest" "test" {
-    yaml_body = <<YAML
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: name-here
-  namespace: default
-  annotations:
-    this.should.be.ignored: "true"
-YAML
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name      = "name-here"
+      namespace = "default"
+      annotations = {
+        "this.should.be.computed" = "true"
+      }
+    }
+  }
 
-    ignore_fields = ["metadata.annotations"]
+  computed_fields = ["metadata.annotations"]
 }

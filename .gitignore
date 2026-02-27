@@ -38,4 +38,4 @@ docusaurus/website/build/
 coverage.txt
 scripts/kubeconfig.yaml
 
-tmp
+.test

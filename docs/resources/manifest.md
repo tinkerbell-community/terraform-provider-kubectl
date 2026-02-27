@@ -14,370 +14,425 @@ Deploy and manage any Kubernetes resource using YAML manifests. Handles the full
 ```terraform
 # Basic ConfigMap example
 resource "kubectl_manifest" "config" {
-  yaml_body = <<-YAML
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: example-config
-      namespace: default
-    data:
-      key1: value1
-      key2: value2
-  YAML
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = "example-config"
+      namespace = "default"
+    }
+    data = {
+      key1 = "value1"
+      key2 = "value2"
+    }
+  }
 }
 
 # Service example
 resource "kubectl_manifest" "service" {
-  yaml_body = <<-YAML
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: example-service
-      namespace: default
-    spec:
-      ports:
-        - name: https
-          port: 443
-          targetPort: 8443
-        - name: http
-          port: 80
-          targetPort: 9090
-      selector:
-        app: example
-  YAML
+  manifest = {
+    apiVersion = "v1"
+    kind       = "Service"
+    metadata = {
+      name      = "example-service"
+      namespace = "default"
+    }
+    spec = {
+      ports = [
+        {
+          name       = "https"
+          port       = 443
+          targetPort = 8443
+        },
+        {
+          name       = "http"
+          port       = 80
+          targetPort = 9090
+        },
+      ]
+      selector = {
+        app = "example"
+      }
+    }
+  }
 }
 
-# Deployment with server-side apply and rollout wait
+# Deployment with field manager and rollout wait
 resource "kubectl_manifest" "deployment" {
-  yaml_body = <<-YAML
-    apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: nginx-deployment
-      namespace: default
-    spec:
-      replicas: 3
-      selector:
-        matchLabels:
-          app: nginx
-      template:
-        metadata:
-          labels:
-            app: nginx
-        spec:
-          containers:
-          - name: nginx
-            image: nginx:1.21
-            ports:
-            - containerPort: 80
-  YAML
+  manifest = {
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+    metadata = {
+      name      = "nginx-deployment"
+      namespace = "default"
+    }
+    spec = {
+      replicas = 3
+      selector = {
+        matchLabels = {
+          app = "nginx"
+        }
+      }
+      template = {
+        metadata = {
+          labels = {
+            app = "nginx"
+          }
+        }
+        spec = {
+          containers = [{
+            name  = "nginx"
+            image = "nginx:1.21"
+            ports = [{
+              containerPort = 80
+            }]
+          }]
+        }
+      }
+    }
+  }
 
-  # Use server-side apply for better conflict resolution
-  server_side_apply = true
-  force_conflicts   = true
+  # Use server-side apply with field manager for better conflict resolution
+  field_manager {
+    name            = "Terraform"
+    force_conflicts = true
+  }
 
   # Wait for the deployment to be ready
-  wait_for_rollout = true
+  wait {
+    rollout = true
+  }
 }
 
-# Basic Ingress example
+# Ingress example
 resource "kubectl_manifest" "ingress_basic" {
-  yaml_body = <<-YAML
-    apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: basic-ingress
-      namespace: default
-      annotations:
-        nginx.ingress.kubernetes.io/rewrite-target: "/"
-    spec:
-      ingressClassName: "nginx"
-      rules:
-      - host: "*.example.com"
-        http:
-          paths:
-          - path: "/testpath"
-            pathType: "Prefix"
-            backend:
-              service:
-                name: test
-                port:
-                  number: 80
-  YAML
-
-  # Mark sensitive annotations
-  sensitive_fields = [
-    "metadata.annotations.nginx.ingress.kubernetes.io/auth-secret",
-  ]
+  manifest = {
+    apiVersion = "networking.k8s.io/v1"
+    kind       = "Ingress"
+    metadata = {
+      name      = "basic-ingress"
+      namespace = "default"
+      annotations = {
+        "nginx.ingress.kubernetes.io/rewrite-target" = "/"
+      }
+    }
+    spec = {
+      ingressClassName = "nginx"
+      rules = [{
+        host = "*.example.com"
+        http = {
+          paths = [{
+            path     = "/testpath"
+            pathType = "Prefix"
+            backend = {
+              service = {
+                name = "test"
+                port = {
+                  number = 80
+                }
+              }
+            }
+          }]
+        }
+      }]
+    }
+  }
 }
 
-# Complex Ingress with multiple annotations
+# Ingress with TLS
 resource "kubectl_manifest" "ingress_complex" {
-  yaml_body = <<-YAML
-    apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      annotations:
-        nginx.ingress.kubernetes.io/affinity: cookie
-        nginx.ingress.kubernetes.io/proxy-body-size: 0m
-        nginx.ingress.kubernetes.io/rewrite-target: "/"
-        nginx.ingress.kubernetes.io/ssl-redirect: "true"
-      name: complex-ingress
-      namespace: default
-    spec:
-      ingressClassName: "nginx"
-      rules:
-        - host: "app.example.com"
-          http:
-            paths:
-              - path: "/"
-                pathType: "Prefix"
-                backend:
-                  service:
-                    name: backend-service
-                    port:
-                      number: 80
-      tls:
-        - secretName: tls-secret
-          hosts:
-          - app.example.com
-  YAML
+  manifest = {
+    apiVersion = "networking.k8s.io/v1"
+    kind       = "Ingress"
+    metadata = {
+      name      = "complex-ingress"
+      namespace = "default"
+      annotations = {
+        "nginx.ingress.kubernetes.io/affinity"        = "cookie"
+        "nginx.ingress.kubernetes.io/proxy-body-size" = "0m"
+        "nginx.ingress.kubernetes.io/rewrite-target"  = "/"
+        "nginx.ingress.kubernetes.io/ssl-redirect"    = "true"
+      }
+    }
+    spec = {
+      ingressClassName = "nginx"
+      rules = [{
+        host = "app.example.com"
+        http = {
+          paths = [{
+            path     = "/"
+            pathType = "Prefix"
+            backend = {
+              service = {
+                name = "backend-service"
+                port = {
+                  number = 80
+                }
+              }
+            }
+          }]
+        }
+      }]
+      tls = [{
+        secretName = "tls-secret"
+        hosts      = ["app.example.com"]
+      }]
+    }
+  }
 }
 
 # RBAC: ServiceAccount and ClusterRoleBinding
 resource "kubectl_manifest" "service_account" {
-  yaml_body = <<-YAML
-    apiVersion: v1
-    kind: ServiceAccount
-    metadata:
-      name: example-sa
-      namespace: default
-  YAML
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name      = "example-sa"
+      namespace = "default"
+    }
+  }
 }
 
 resource "kubectl_manifest" "cluster_role_binding" {
   depends_on = [kubectl_manifest.service_account]
 
-  yaml_body = <<-YAML
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: ClusterRoleBinding
-    metadata:
-      name: example-crb
-    roleRef:
-      apiGroup: rbac.authorization.k8s.io
-      kind: ClusterRole
-      name: cluster-admin
-    subjects:
-      - kind: ServiceAccount
-        name: example-sa
-        namespace: default
-  YAML
+  manifest = {
+    apiVersion = "rbac.authorization.k8s.io/v1"
+    kind       = "ClusterRoleBinding"
+    metadata = {
+      name = "example-crb"
+    }
+    roleRef = {
+      apiGroup = "rbac.authorization.k8s.io"
+      kind     = "ClusterRole"
+      name     = "cluster-admin"
+    }
+    subjects = [{
+      kind      = "ServiceAccount"
+      name      = "example-sa"
+      namespace = "default"
+    }]
+  }
 }
 
 # Custom Resource Definition (CRD)
 resource "kubectl_manifest" "crd" {
-  yaml_body = <<-YAML
-    apiVersion: apiextensions.k8s.io/v1
-    kind: CustomResourceDefinition
-    metadata:
-      name: crontabs.stable.example.com
-    spec:
-      group: stable.example.com
-      conversion:
-        strategy: None
-      scope: Namespaced
-      names:
-        plural: crontabs
-        singular: crontab
-        kind: CronTab
-        shortNames:
-          - ct
-      versions:
-        - name: v1
-          served: true
-          storage: true
-          schema:
-            openAPIV3Schema:
-              type: object
-              properties:
-                spec:
-                  type: object
-                  properties:
-                    cronSpec:
-                      type: string
-                    image:
-                      type: string
-  YAML
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "crontabs.stable.example.com"
+    }
+    spec = {
+      group = "stable.example.com"
+      conversion = {
+        strategy = "None"
+      }
+      scope = "Namespaced"
+      names = {
+        plural     = "crontabs"
+        singular   = "crontab"
+        kind       = "CronTab"
+        shortNames = ["ct"]
+      }
+      versions = [{
+        name    = "v1"
+        served  = true
+        storage = true
+        schema = {
+          openAPIV3Schema = {
+            type = "object"
+            properties = {
+              spec = {
+                type = "object"
+                properties = {
+                  cronSpec = { type = "string" }
+                  image    = { type = "string" }
+                }
+              }
+            }
+          }
+        }
+      }]
+    }
+  }
 }
 
 # Custom Resource using the CRD
 resource "kubectl_manifest" "custom_resource" {
   depends_on = [kubectl_manifest.crd]
 
-  yaml_body = <<-YAML
-    apiVersion: stable.example.com/v1
-    kind: CronTab
-    metadata:
-      name: my-crontab
-      namespace: default
-    spec:
-      cronSpec: "* * * * /5"
-      image: my-awesome-cron-image
-  YAML
+  manifest = {
+    apiVersion = "stable.example.com/v1"
+    kind       = "CronTab"
+    metadata = {
+      name      = "my-crontab"
+      namespace = "default"
+    }
+    spec = {
+      cronSpec = "* * * * /5"
+      image    = "my-awesome-cron-image"
+    }
+  }
 }
+```
 
-# Override namespace example
-resource "kubectl_manifest" "with_override" {
-  yaml_body = <<-YAML
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: override-example
-      namespace: original-namespace
-    data:
-      key: value
-  YAML
-
-  # Override the namespace from YAML
-  override_namespace = "production"
+```terraform
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "networking.k8s.io/v1"
+    kind       = "Ingress"
+    metadata = {
+      name = "test-ingress"
+      annotations = {
+        "nginx.ingress.kubernetes.io/rewrite-target" = "/"
+        "azure/frontdoor"                            = "enabled"
+      }
+    }
+    spec = {
+      rules = [{
+        http = {
+          paths = [{
+            path     = "/testpath"
+            pathType = "Prefix"
+            backend = {
+              service = {
+                name = "test"
+                port = {
+                  number = 80
+                }
+              }
+            }
+          }]
+        }
+      }]
+    }
+  }
 }
+```
 
-# Ignore specific fields for drift detection
-resource "kubectl_manifest" "ignore_fields_example" {
-  yaml_body = <<-YAML
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: ignore-example
-      namespace: default
-    data:
-      managed: "by-terraform"
-      unmanaged: "can-change"
-  YAML
+```terraform
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "Pod"
+    metadata = {
+      name = "nginx"
+    }
+    spec = {
+      containers = [{
+        name  = "nginx"
+        image = "nginx:1.14.2"
+        readinessProbe = {
+          httpGet = {
+            path = "/"
+            port = 80
+          }
+          initialDelaySeconds = 10
+        }
+      }]
+    }
+  }
 
-  # Ignore changes to specific fields
-  ignore_fields = [
-    "data.unmanaged",
+  wait {
+    field {
+      key   = "status.containerStatuses.[0].ready"
+      value = "true"
+    }
+    field {
+      key   = "status.phase"
+      value = "Running"
+    }
+    field {
+      key        = "status.podIP"
+      value      = "^(\\d+(\\.|$)){4}"
+      value_type = "regex"
+    }
+    condition {
+      type   = "ContainersReady"
+      status = "True"
+    }
+    condition {
+      type   = "Ready"
+      status = "True"
+    }
+  }
+
+  # Fail immediately if the pod enters a crash loop
+  error_on {
+    field {
+      key   = "status.containerStatuses.[0].state.waiting.reason"
+      value = "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"
+    }
+  }
+}
+```
+
+```terraform
+# MutatingWebhookConfiguration with computed fields
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "admissionregistration.k8s.io/v1"
+    kind       = "MutatingWebhookConfiguration"
+    metadata = {
+      name = "istio-sidecar-injector"
+      annotations = {
+        "my-annotation" = "some-value"
+      }
+    }
+    webhooks = [{
+      name = "sidecar-injector.istio.io"
+      clientConfig = {
+        caBundle = ""
+      }
+    }]
+  }
+
+  # Fields that may be modified by external controllers
+  computed_fields = [
     "metadata.annotations",
+    "webhooks.0.clientConfig.caBundle",
   ]
 }
 ```
 
 ```terraform
+# ServiceAccount with computed fields for controller-managed annotations
 resource "kubectl_manifest" "test" {
-    yaml_body = <<YAML
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: test-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    azure/frontdoor: enabled
-spec:
-  rules:
-  - http:
-      paths:
-      - path: /testpath
-        pathType: "Prefix"
-        backend:
-          serviceName: test
-          servicePort: 80
-YAML
-}
-```
-
-```terraform
-resource "kubectl_manifest" "test" {
-  wait_for {
-    field {
-      key = "status.containerStatuses.[0].ready"
-      value = "true"
-    }
-    field {
-      key = "status.phase"
-      value = "Running"
-    }
-    field {
-      key = "status.podIP"
-      value = "^(\\d+(\\.|$)){4}"
-      value_type = "regex"
-    }
-    condition {
-      type = "ContainersReady"
-      status = "True"
-    }
-    condition {
-      type = "Ready"
-      status = "True"
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name      = "name-here"
+      namespace = "default"
+      annotations = {
+        "this.should.be.computed" = "true"
+      }
     }
   }
-  yaml_body = <<YAML
-apiVersion: v1
-kind: Pod
-metadata:
-  name: nginx
-spec:
-  containers:
-  - name: nginx
-    image: nginx:1.14.2
-    readinessProbe:
-      httpGet:
-        path: "/"
-        port: 80
-      initialDelaySeconds: 10
-YAML
+
+  computed_fields = ["metadata.annotations"]
 }
 ```
 
 ```terraform
+# MutatingWebhookConfiguration with caBundle as a computed field
 resource "kubectl_manifest" "test" {
-    sensitive_fields = [
-        "metadata.annotations.my-secret-annotation"
-    ]
+  manifest = {
+    apiVersion = "admissionregistration.k8s.io/v1"
+    kind       = "MutatingWebhookConfiguration"
+    metadata = {
+      name = "istio-sidecar-injector"
+    }
+    webhooks = [{
+      name = "sidecar-injector.istio.io"
+      clientConfig = {
+        caBundle = ""
+      }
+    }]
+  }
 
-    yaml_body = <<YAML
-apiVersion: admissionregistration.k8s.io/v1beta1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: istio-sidecar-injector
-  annotations:
-    my-secret-annotation: "this is very secret"
-webhooks:
-  - clientConfig:
-      caBundle: ""
-YAML
-}
-```
-
-```terraform
-resource "kubectl_manifest" "test" {
-    yaml_body = <<YAML
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: name-here
-  namespace: default
-  annotations:
-    this.should.be.ignored: "true"
-YAML
-
-    ignore_fields = ["metadata.annotations"]
-}
-```
-
-```terraform
-resource "kubectl_manifest" "test" {
-    yaml_body = <<YAML
-apiVersion: admissionregistration.k8s.io/v1beta1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: istio-sidecar-injector
-webhooks:
-  - clientConfig:
-      caBundle: ""
-YAML
-
-    ignore_fields = ["webhooks.0.clientConfig.caBundle"]
+  computed_fields = ["webhooks.0.clientConfig.caBundle"]
 }
 ```
 
@@ -393,15 +448,47 @@ YAML
 - `apply_only` (Boolean) Apply only (never delete the resource). Default: false
 - `computed_fields` (List of String) List of manifest fields whose values may be altered by the API server during apply. Defaults to: `["metadata.annotations", "metadata.labels"]`
 - `delete_cascade` (String) Cascade mode for deletion: Background or Foreground. Default: Background
-- `field_manager` (Block List) Configure field manager options for server-side apply. (see [below for nested schema](#nestedblock--field_manager))
+- `error_on` (Block, Optional) Define error conditions that are checked continuously while waiting for success conditions. If any error condition matches, the apply fails immediately. Use this to detect error states such as CrashLoopBackOff or Failed status. (see [below for nested schema](#nestedblock--error_on))
+- `field_manager` (Block, Optional) Configure field manager options for server-side apply. (see [below for nested schema](#nestedblock--field_manager))
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
-- `wait` (Block List) Configure waiter options. (see [below for nested schema](#nestedblock--wait))
+- `wait` (Block, Optional) Configure waiter options. The apply will block until success conditions are met or the timeout is reached. (see [below for nested schema](#nestedblock--wait))
 
 ### Read-Only
 
 - `id` (String) Kubernetes resource unique identifier (UID) assigned by the API server. This is a read-only value and has no impact on the plan.
 - `object` (Dynamic) The full resource object as returned by the API server.
 - `status` (Dynamic) Resource status as reported by the Kubernetes API server.
+
+<a id="nestedblock--error_on"></a>
+### Nested Schema for `error_on`
+
+Optional:
+
+- `condition` (Block List) Fail if a status condition matches. Any match triggers failure. (see [below for nested schema](#nestedblock--error_on--condition))
+- `field` (Block List) Fail if a resource field matches an error pattern. Multiple `field` blocks can be specified; any match triggers failure. (see [below for nested schema](#nestedblock--error_on--field))
+
+<a id="nestedblock--error_on--condition"></a>
+### Nested Schema for `error_on.condition`
+
+Optional:
+
+- `status` (String) The condition status to match.
+- `type` (String) The type of condition to check.
+
+
+<a id="nestedblock--error_on--field"></a>
+### Nested Schema for `error_on.field`
+
+Required:
+
+- `key` (String) JSON path to the field to check (e.g., `status.containerStatuses.0.state.waiting.reason`).
+- `value` (String) Regex pattern to match against the field value. If matched, the apply fails immediately.
+
+Optional:
+
+- `value_type` (String) Comparison type: `eq` for exact match or `regex` for regular expression matching (default).
+
+
 
 <a id="nestedblock--field_manager"></a>
 ### Nested Schema for `field_manager`
@@ -428,7 +515,6 @@ Optional:
 Optional:
 
 - `condition` (Block List) Wait for status conditions to match. (see [below for nested schema](#nestedblock--wait--condition))
-- `error_on` (Block List) Fail the apply immediately if any of these conditions are detected. Use this to detect error states during waiting, such as CrashLoopBackOff or Failed status. The `key` is a JSON path (e.g., `status.containerStatuses.0.state.waiting.reason`) and `value` is a regex pattern matched against the field value. (see [below for nested schema](#nestedblock--wait--error_on))
 - `field` (Block List) Wait for a resource field to reach an expected value. Multiple `field` blocks can be specified; all must match. (see [below for nested schema](#nestedblock--wait--field))
 - `rollout` (Boolean) Wait for rollout to complete on resources that support `kubectl rollout status`.
 
@@ -439,19 +525,6 @@ Optional:
 
 - `status` (String) The condition status.
 - `type` (String) The type of condition.
-
-
-<a id="nestedblock--wait--error_on"></a>
-### Nested Schema for `wait.error_on`
-
-Required:
-
-- `key` (String) JSON path to the field to check (e.g., `status.phase`, `status.conditions.0.reason`).
-- `value` (String) Regex pattern to match against the field value. If matched, the apply fails immediately.
-
-Optional:
-
-- `message` (String) Custom error message to display when this error condition is matched.
 
 
 <a id="nestedblock--wait--field"></a>
