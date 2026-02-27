@@ -9,11 +9,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
-	yamlpkg "github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	actionschema "github.com/hashicorp/terraform-plugin-framework/action/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
+	yamlpkg "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8stypes "k8s.io/apimachinery/pkg/types"

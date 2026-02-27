@@ -10,10 +10,10 @@ import (
 	"context"
 	"testing"
 
-	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
-	tfstatehelper "github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/state"
 	"github.com/hashicorp/go-hclog"
+	provider "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
+	tfstatehelper "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/helper/state"
 )
 
 // This test case tests a Service but also is a demonstration of some the assert functions

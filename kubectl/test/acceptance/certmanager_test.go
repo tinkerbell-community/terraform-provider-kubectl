@@ -10,9 +10,9 @@ import (
 	"context"
 	"testing"
 
-	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
 	"github.com/hashicorp/go-hclog"
+	provider "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
 )
 
 func TestKubernetesManifest_InstallCertManager(t *testing.T) {

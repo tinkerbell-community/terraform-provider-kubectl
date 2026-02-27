@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
 	"k8s.io/apimachinery/pkg/api/meta"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

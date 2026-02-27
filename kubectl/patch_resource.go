@@ -10,8 +10,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
-	yamlpkg "github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -25,6 +23,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
+	yamlpkg "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8stypes "k8s.io/apimachinery/pkg/types"

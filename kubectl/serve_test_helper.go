@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6/tf6server"
 )
 
-const providerName = "registry.terraform.io/alekc/kubectl"
+const providerName = "registry.terraform.io/tinkerbell-community/kubectl"
 
 // ServeTest starts an in-process framework provider server for acceptance testing.
 // It returns ReattachInfo that can be passed to terraform-exec's SetReattachInfo.

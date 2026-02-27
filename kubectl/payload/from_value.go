@@ -7,8 +7,8 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/morph"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/morph"
 )
 
 // FromTFValue converts a Terraform specific tftypes.Value type object

@@ -7,7 +7,7 @@ This resource handles creation, deletion and even updating your kubernetes resou
 Behind the scenes, this provider uses the same capability as the `kubectl apply` command, that is, you can update the YAML inline and the resource will be updated in place in kubernetes.
 
 > **TIP:** This resource only supports a single yaml resource. If you have a list of documents in your yaml file,
-> use the [kubectl_path_documents](https://registry.terraform.io/providers/alekc/kubectl/latest/docs/data-sources/kubectl_path_documents) data source to split the files into individual resources.
+> use the [kubectl_path_documents](https://registry.terraform.io/providers/tinkerbell-community/kubectl/latest/docs/data-sources/kubectl_path_documents) data source to split the files into individual resources.
 
 ## Example Usage
 
@@ -93,22 +93,21 @@ YAML
 
 > Note: Only Map values are supported to be made sensitive. If you need to make a value from a list (or sub-list) sensitive, you can set the high-level key as sensitive to suppress the entire tree output.
 
-
 ## Ignore Manifest Fields
 
 You can configure a list of yaml keys to ignore changes to via the `ignore_fields` field.
 Set these for fields set by Operators or other processes in kubernetes and as such you don't want to update.
 
 By default, the following control fields are ignored:
-- `status`
-- `metadata.finalizers`
-- `metadata.initializers`
-- `metadata.ownerReferences`
-- `metadata.creationTimestamp`
-- `metadata.generation`
-- `metadata.resourceVersion`
-- `metadata.uid`
-- `metadata.annotations.kubectl.kubernetes.io/last-applied-configuration`
+* `status`
+* `metadata.finalizers`
+* `metadata.initializers`
+* `metadata.ownerReferences`
+* `metadata.creationTimestamp`
+* `metadata.generation`
+* `metadata.resourceVersion`
+* `metadata.uid`
+* `metadata.annotations.kubectl.kubernetes.io/last-applied-configuration`
 
 These syntax matches the Terraform style flattened-map syntax, whereby keys are separated by `.` paths.
 

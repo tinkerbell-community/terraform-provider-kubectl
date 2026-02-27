@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	kuberneteshelper "github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
-	tftest "github.com/alekc/terraform-provider-kubectl/kubectl/test/plugintest"
+	kuberneteshelper "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
+	tftest "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/plugintest"
 	"k8s.io/client-go/rest"
 )
 

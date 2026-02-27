@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
 )
 
 // testAccProtoV6ProviderFactories are used to instantiate the provider during

@@ -7,6 +7,7 @@ When developing the kubectl provider locally, you'll want to use a locally built
 ### Using dev_overrides
 
 1. **Build the provider:**
+
    ```bash
    make build
    # Or manually:
@@ -14,20 +15,22 @@ When developing the kubectl provider locally, you'll want to use a locally built
    ```
 
 2. **Create or edit `~/.terraformrc`:**
+
    ```hcl
    provider_installation {
      dev_overrides {
-       "alekc/kubectl" = "/Users/atkini01/src/appkins/terraform-provider-kubectl"
+       "tinkerbell-community/kubectl" = "/Users/atkini01/src/appkins/terraform-provider-kubectl"
      }
 
      # For all other providers, use the registry
      direct {}
    }
    ```
-   
+
    **Important:** Replace the path with your actual workspace directory.
 
 3. **Use Terraform as normal:**
+
    ```bash
    cd your-terraform-project
    terraform init
@@ -40,6 +43,7 @@ When developing the kubectl provider locally, you'll want to use a locally built
 ### Important Notes
 
 - **Dev Override Warning:** Terraform will show a warning that you're using a dev override. This is expected:
+
   ```
   Warning: Provider development overrides are in effect
   ```
@@ -57,8 +61,8 @@ If you need to test with a specific version (matching your state):
 go build -ldflags "-X main.version=v2.0.3" -o terraform-provider-kubectl
 
 # Install to Terraform's plugin directory
-mkdir -p ~/.terraform.d/plugins/registry.terraform.io/alekc/kubectl/2.0.3/darwin_arm64
-cp terraform-provider-kubectl ~/.terraform.d/plugins/registry.terraform.io/alekc/kubectl/2.0.3/darwin_arm64/
+mkdir -p ~/.terraform.d/plugins/registry.terraform.io/tinkerbell-community/kubectl/2.0.3/darwin_arm64
+cp terraform-provider-kubectl ~/.terraform.d/plugins/registry.terraform.io/tinkerbell-community/kubectl/2.0.3/darwin_arm64/
 
 # Run terraform init to use the new version
 cd your-terraform-project
@@ -86,6 +90,7 @@ go build -ldflags "-X main.version=v2.0.3"
 1. **During Development:** Use dev_overrides (no version needed)
 2. **For Testing:** Build with explicit version matching your test state
 3. **For Release:** Create a git tag, then build:
+
    ```bash
    git tag v2.0.4
    git push origin v2.0.4
@@ -113,11 +118,12 @@ go test -v ./kubectl -run TestAccManifestResource_basic
 1. Build the provider: `make build`
 2. Set up dev_overrides in `~/.terraformrc`
 3. Create a test configuration in a new directory:
+
    ```hcl
    terraform {
      required_providers {
        kubectl = {
-         source = "alekc/kubectl"
+         source = "tinkerbell-community/kubectl"
        }
      }
    }
@@ -137,6 +143,7 @@ go test -v ./kubectl -run TestAccManifestResource_basic
      YAML
    }
    ```
+
 4. Run: `terraform init && terraform plan && terraform apply`
 
 ## Documentation Generation
@@ -165,7 +172,8 @@ This reads examples from the `examples/` directory and generates documentation i
 
 **Cause:** Terraform can't locate your local binary.
 
-**Solution:** 
+**Solution:**
+
 1. Ensure the path in `dev_overrides` is correct
 2. Ensure you've built the provider: `make build`
 3. Check the binary exists: `ls -la terraform-provider-kubectl`
@@ -183,11 +191,13 @@ This reads examples from the `examples/` directory and generates documentation i
    - Push the tag: `git push origin v2.0.4`
 
 2. **Build Release Binaries:**
+
    ```bash
    make cross-compile
    ```
 
 3. **Update Documentation:**
+
    ```bash
    go generate ./...
    git add docs/

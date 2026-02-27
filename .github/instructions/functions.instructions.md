@@ -1,4 +1,4 @@
-Review the implementation in the hashicorp/kubernetes provider to compare the functionality with what is present in the alekc/kubectl provider.
+Review the implementation in the hashicorp/kubernetes provider to compare the functionality with what is present in the tinkerbell-community/kubectl provider.
 
 Consider the kubernetes provider's implemention of the yaml convertion:
 

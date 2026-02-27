@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -19,6 +17,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/mitchellh/go-homedir"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/util"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sresource "k8s.io/cli-runtime/pkg/resource"

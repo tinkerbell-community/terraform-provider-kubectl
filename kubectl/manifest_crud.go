@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/api"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 	"k8s.io/apimachinery/pkg/api/errors"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

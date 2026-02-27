@@ -3,6 +3,7 @@
 ## Current Status
 
 ### ✅ Completed (Foundation)
+
 1. **Conversion Utilities** (`kubectl/conversion.go`)
    - `dynamicToMap()` - Convert Dynamic → map[string]any
    - `mapToDynamic()` - Convert map[string]any → Dynamic
@@ -32,6 +33,7 @@
 **Location:** `kubectl/manifest_resource.go` ~line 270
 
 **Current (lines 270-320):**
+
 ```go
 func (r *manifestResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
     var plan manifestResourceModel
@@ -48,6 +50,7 @@ func (r *manifestResource) Create(ctx context.Context, req resource.CreateReques
 ```
 
 **Replace with:**
+
 ```go
 func (r *manifestResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
     var plan manifestResourceModel
@@ -120,6 +123,7 @@ func (r *manifestResource) Create(ctx context.Context, req resource.CreateReques
 **Location:** `kubectl/manifest_resource.go` ~line 330
 
 **Replace:**
+
 ```go
 func (r *manifestResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
     var state manifestResourceModel
@@ -160,6 +164,7 @@ func (r *manifestResource) Read(ctx context.Context, req resource.ReadRequest, r
 **Location:** `kubectl/manifest_resource.go` ~line 420
 
 **Replace:**
+
 ```go
 func (r *manifestResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
     var state manifestResourceModel
@@ -201,16 +206,19 @@ func (r *manifestResource) Delete(ctx context.Context, req resource.DeleteReques
 **Location:** `kubectl/manifest_resource.go` ~line 544
 
 **Current logic:**
+
 - Checks yaml_body changes
 - Detects UID drift
 - Generates fingerprints
 
 **New logic:**
+
 - Check metadata.name/namespace changes → RequiresReplace
 - Set status/object as Unknown if metadata/spec changed
 - Remove yaml fingerprint logic
 
 **Replace with:**
+
 ```go
 func (r *manifestResource) ModifyPlan(
     ctx context.Context,
@@ -419,6 +427,7 @@ func (r *manifestResource) handleWait(ctx context.Context, model *manifestResour
 ## Step 9: Remove Old Methods
 
 **Delete these methods from manifest_resource.go:**
+
 1. `applyManifest()` (old version ~line 681)
 2. `readManifest()` (old version ~line 937)
 3. `deleteManifest()` (old version ~line 1033)
@@ -470,8 +479,9 @@ import (
 ```
 
 **Remove unused imports:**
-- `github.com/alekc/terraform-provider-kubectl/yaml` (from manifest_resource.go, keep in manifest_crud.go)
-- `github.com/alekc/terraform-provider-kubectl/kubectl/util` (from manifest_resource.go, keep in manifest_crud.go)
+
+- `github.com/tinkerbell-community/terraform-provider-kubectl/yaml` (from manifest_resource.go, keep in manifest_crud.go)
+- `github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/util` (from manifest_resource.go, keep in manifest_crud.go)
 - `github.com/thedevsaddam/gojsonq/v2`
 - `crypto/sha256`
 - `encoding/base64`
@@ -481,17 +491,20 @@ import (
 ## Step 12: Testing
 
 ### Unit Tests
+
 ```bash
 go test -v ./kubectl/conversion_test.go ./kubectl/conversion.go
 go test -v ./kubectl/manifest_v2_helpers_test.go ./kubectl/manifest_v2_helpers.go ./kubectl/conversion.go
 ```
 
 ### Build Test
+
 ```bash
 go build ./kubectl/...
 ```
 
 ### Acceptance Tests
+
 ```bash
 TF_ACC=1 go test -v ./kubectl/manifest_resource_test.go -timeout 120m
 ```
@@ -501,6 +514,7 @@ TF_ACC=1 go test -v ./kubectl/manifest_resource_test.go -timeout 120m
 **Location:** `kubectl/manifest_resource_test.go`
 
 Update test configurations from:
+
 ```hcl
 resource "kubectl_manifest" "test" {
   yaml_body = <<-YAML
@@ -512,6 +526,7 @@ resource "kubectl_manifest" "test" {
 ```
 
 To:
+
 ```hcl
 resource "kubectl_manifest" "test" {
   api_version = "v1"
@@ -562,6 +577,7 @@ Users MUST update their configurations:
 ### Migration Example
 
 **Before (v0):**
+
 ```hcl
 resource "kubectl_manifest" "example" {
   yaml_body = file("deployment.yaml")
@@ -573,6 +589,7 @@ resource "kubectl_manifest" "example" {
 ```
 
 **After (v1):**
+
 ```hcl
 resource "kubectl_manifest" "example" {
   api_version = "apps/v1"

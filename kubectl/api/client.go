@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"

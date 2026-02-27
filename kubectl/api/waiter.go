@@ -11,11 +11,11 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/payload"
 	"github.com/hashicorp/go-hclog"
 	hcl "github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/payload"
 	"github.com/zclconf/go-cty/cty"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"

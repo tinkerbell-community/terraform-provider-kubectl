@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/logging"
 	"github.com/hashicorp/go-version"
 	install "github.com/hashicorp/hc-install"
 	"github.com/hashicorp/hc-install/checkpoint"
@@ -17,6 +16,7 @@ import (
 	"github.com/hashicorp/hc-install/product"
 	"github.com/hashicorp/hc-install/releases"
 	"github.com/hashicorp/hc-install/src"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/logging"
 )
 
 // Config is used to configure the test helper. In most normal test programs

@@ -12,10 +12,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/logging"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/logging"
 )
 
 const (

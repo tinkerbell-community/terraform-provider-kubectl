@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/go-hclog"
+	provider "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
 )
 
 func TestKubernetesManifest_CustomResource_Multiversion(t *testing.T) {

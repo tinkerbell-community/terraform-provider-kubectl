@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"testing"
 
-	provider "github.com/alekc/terraform-provider-kubectl/kubectl"
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
-	tfstatehelper "github.com/alekc/terraform-provider-kubectl/kubectl/test/helper/state"
 	"github.com/hashicorp/go-hclog"
+	provider "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/helper/kubernetes"
+	tfstatehelper "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/helper/state"
 )
 
 func TestKubernetesManifest_Import(t *testing.T) {

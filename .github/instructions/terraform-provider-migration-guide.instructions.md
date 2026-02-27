@@ -105,7 +105,7 @@ terraform-provider-kubectl/
 Update `go.mod` to include Plugin Framework packages:
 
 ```go
-module github.com/alekc/terraform-provider-kubectl
+module github.com/tinkerbell-community/terraform-provider-kubectl
 
 go 1.22.0
 
@@ -156,9 +156,9 @@ import (
     "github.com/hashicorp/terraform-plugin-mux/tf6muxserver"
     
     // SDK v2 provider (existing)
-    sdkProvider "github.com/alekc/terraform-provider-kubectl/kubernetes"
+    sdkProvider "github.com/tinkerbell-community/terraform-provider-kubectl/kubernetes"
     // Plugin Framework provider (new)
-    frameworkProvider "github.com/alekc/terraform-provider-kubectl/kubectl"
+    frameworkProvider "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
 )
 
 //go:generate go tool github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate -provider-name kubectl
@@ -199,7 +199,7 @@ func main() {
     err = muxServer.Serve(
         ctx,
         &tf6muxserver.ServeOpts{
-            Address: "registry.terraform.io/alekc/kubectl",
+            Address: "registry.terraform.io/tinkerbell-community/kubectl",
             Debug:   debug,
         },
     )
@@ -596,7 +596,7 @@ import (
     "github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
     "github.com/hashicorp/terraform-plugin-framework/types"
     
-    "github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
+    "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces
@@ -1069,7 +1069,7 @@ import (
     "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
     "github.com/hashicorp/terraform-plugin-framework/types"
     
-    "github.com/alekc/terraform-provider-kubectl/kubectl/yaml"
+    "github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces

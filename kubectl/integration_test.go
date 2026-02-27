@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/testcontainers/testcontainers-go/modules/k3s"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
 )

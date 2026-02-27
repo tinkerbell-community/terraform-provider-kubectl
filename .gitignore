@@ -37,3 +37,5 @@ node_modules/
 docusaurus/website/build/
 coverage.txt
 scripts/kubeconfig.yaml
+
+tmp

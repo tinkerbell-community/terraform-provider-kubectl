@@ -10,8 +10,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/logging"
 	"github.com/hashicorp/terraform-exec/tfexec"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/logging"
 )
 
 // AutoInitProviderHelper is the main entrypoint for testing provider plugins

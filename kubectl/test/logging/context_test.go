@@ -8,10 +8,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/alekc/terraform-provider-kubectl/kubectl/test/logging"
 	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform-plugin-log/tfsdklog"
 	"github.com/hashicorp/terraform-plugin-log/tfsdklogtest"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/test/logging"
 )
 
 func TestInitContext(t *testing.T) {
