@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 )
 
 var _ function.Function = ManifestEncodeFunction{}
@@ -67,7 +68,7 @@ func (f ManifestEncodeFunction) Run(
 	}
 
 	uv := manifest.UnderlyingValue()
-	s, diags := encodeManifestYAML(uv, validate)
+	s, diags := yaml.EncodeManifestYAML(uv, validate)
 	if diags.HasError() {
 		resp.Error = function.FuncErrorFromDiags(ctx, diags)
 		return

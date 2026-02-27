@@ -135,13 +135,6 @@ func waitBlockAttrTypes() map[string]attr.Type {
 	}
 }
 
-// errorOnBlockObjectType returns the attr.Type for the error_on block.
-func errorOnBlockObjectType() attr.Type {
-	return types.ObjectType{
-		AttrTypes: errorOnBlockAttrTypes(),
-	}
-}
-
 // errorOnBlockAttrTypes returns the attribute types map for the error_on block.
 func errorOnBlockAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
@@ -158,13 +151,6 @@ func errorOnBlockAttrTypes() map[string]attr.Type {
 				"status": types.StringType,
 			},
 		}},
-	}
-}
-
-// fieldManagerBlockObjectType returns the attr.Type for the field_manager block.
-func fieldManagerBlockObjectType() attr.Type {
-	return types.ObjectType{
-		AttrTypes: fieldManagerBlockAttrTypes(),
 	}
 }
 
@@ -1525,12 +1511,14 @@ func checkErrorOnConditions(
 ) error {
 	res, err := rs.Get(ctx, name, meta_v1.GetOptions{})
 	if err != nil {
-		return nil // Can't check, don't fail
+		// Can't check, don't fail
+		return nil //nolint:nilerr
 	}
 
 	yamlJSON, err := res.MarshalJSON()
 	if err != nil {
-		return nil
+		// Can't check, don't fail
+		return nil //nolint:nilerr
 	}
 
 	jsonStr := string(yamlJSON)

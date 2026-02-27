@@ -51,11 +51,11 @@ func TestMain(m *testing.M) {
 	if _, err := kubeconfigFile.Write(kubeConfigYaml); err != nil {
 		log.Fatalf("Failed to write kubeconfig: %v", err)
 	}
-	kubeconfigFile.Close()
+	_ = kubeconfigFile.Close()
 
 	// Set KUBECONFIG so the provider picks it up
-	os.Setenv("KUBECONFIG", kubeconfigPath)
-	os.Setenv("KUBE_CONFIG_PATH", kubeconfigPath)
+	_ = os.Setenv("KUBECONFIG", kubeconfigPath)
+	_ = os.Setenv("KUBE_CONFIG_PATH", kubeconfigPath)
 
 	// Build a dynamic client for direct K8s assertions
 	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeConfigYaml)
@@ -85,7 +85,7 @@ func TestMain(m *testing.M) {
 	if err := k3sContainer.Terminate(ctx); err != nil {
 		log.Printf("Failed to terminate K3s container: %v", err)
 	}
-	os.Remove(kubeconfigPath)
+	_ = os.Remove(kubeconfigPath)
 
 	os.Exit(code)
 }
@@ -296,7 +296,7 @@ func TestIntegration_ConfigMap_ApplyOnly(t *testing.T) {
 
 // -- Config Helpers --
 
-func configMapConfig(name, namespace, key, value string) string {
+func configMapConfig(name, namespace, key, value string) string { //nolint:unparam
 	return fmt.Sprintf(`
 resource "kubectl_manifest" "test" {
   manifest = {

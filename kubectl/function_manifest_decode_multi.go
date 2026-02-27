@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 )
 
 var _ function.Function = ManifestDecodeMultiFunction{}
@@ -66,7 +67,7 @@ func (f ManifestDecodeMultiFunction) Run(
 		validate = validateArgs[0]
 	}
 
-	tv, diags := decodeManifestYAML(ctx, manifest, validate)
+	tv, diags := yaml.DecodeManifestYAML(ctx, manifest, validate)
 	if diags.HasError() {
 		resp.Error = function.FuncErrorFromDiags(ctx, diags)
 		return
