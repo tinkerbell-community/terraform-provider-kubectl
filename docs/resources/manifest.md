@@ -769,10 +769,13 @@ resource "kubectl_manifest" "app_service" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `delete` (Attributes) Configure deletion behavior. (see [below for nested schema](#nestedatt--delete))
 - `error` (Attributes) Define error conditions that are checked continuously while waiting for success conditions. If any error condition matches, the apply fails immediately. Use this to detect error states such as CrashLoopBackOff or Failed status. (see [below for nested schema](#nestedatt--error))
 - `field_manager` (Attributes) Configure field manager options for server-side apply. (see [below for nested schema](#nestedatt--field_manager))
 - `fields` (Attributes) Configure field tracking options. (see [below for nested schema](#nestedatt--fields))
+- `fields_wo` (Dynamic, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only field overrides merged into the manifest before applying. Provide a map of dot-notation paths to sensitive values that should not be stored in Terraform state (e.g. `{"data.password" = base64encode(var.password)}`). Array elements can be addressed by index (e.g. `spec.template.spec.containers.0.env.0.value`). These paths are excluded from the `object` attribute on read.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `wait` (Attributes) Configure waiter options. The apply will block until success conditions are met or the timeout is reached. (see [below for nested schema](#nestedatt--wait))
 

@@ -3,9 +3,12 @@ package kubectl
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,6 +73,9 @@ type manifestResourceModel struct {
 	Error        types.Object   `tfsdk:"error"`
 	FieldManager types.Object   `tfsdk:"field_manager"`
 	Timeouts     timeouts.Value `tfsdk:"timeouts"`
+	// FieldsWo is always null in state; write-only values are read from config
+	// in Create/Update and applied before sending to the Kubernetes API.
+	FieldsWo types.Dynamic `tfsdk:"fields_wo"`
 }
 
 // waitModel describes the wait attribute.
@@ -116,6 +122,12 @@ type deleteModel struct {
 type fieldManagerModel struct {
 	Name           types.String `tfsdk:"name"`
 	ForceConflicts types.Bool   `tfsdk:"force_conflicts"`
+}
+
+// fieldsWoEntryModel describes a single write-only field override entry.
+type fieldsWoEntryModel struct {
+	Key   types.String  `tfsdk:"key"`
+	Value types.Dynamic `tfsdk:"value"`
 }
 
 // manifestIdentityModel describes the resource identity.
@@ -474,6 +486,16 @@ func (r *manifestResource) Schema(
 					},
 				},
 			},
+			"fields_wo": schema.DynamicAttribute{
+				Optional:  true,
+				WriteOnly: true,
+				MarkdownDescription: "Write-only field overrides merged into the manifest before applying. " +
+					"Provide a map of dot-notation paths to sensitive values that should not be " +
+					"stored in Terraform state (e.g. `{\"data.password\" = base64encode(var.password)}`). " +
+					"Array elements can be addressed by index (e.g. " +
+					"`spec.template.spec.containers.0.env.0.value`). " +
+					"These paths are excluded from the `object` attribute on read.",
+			},
 		},
 	}
 }
@@ -604,6 +626,29 @@ func (r *manifestResource) Create(
 		return
 	}
 
+	// Read write-only fields from config (unavailable in plan — TPF nullifies WO in plan/state).
+	var fieldsWo types.Dynamic
+	diags = req.Config.GetAttribute(ctx, path.Root("fields_wo"), &fieldsWo)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Persist the WO key paths in private state so Read can mask them from object.
+	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
+		keys, d := extractFieldsWoKeys(ctx, fieldsWo)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() && len(keys) > 0 {
+			keysJSON, err := json.Marshal(keys)
+			if err == nil {
+				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
+			}
+		}
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Get timeout from config
 	createTimeout, diags := plan.Timeouts.Create(ctx, 10*time.Minute)
 	resp.Diagnostics.Append(diags...)
@@ -628,9 +673,24 @@ func (r *manifestResource) Create(
 	}
 
 	err := backoff.Retry(func() error {
-		return r.applyManifest(createCtx, &plan)
+		err := r.applyManifest(createCtx, &plan, fieldsWo)
+		var ece *errorConditionError
+		if errors.As(err, &ece) {
+			return backoff.Permanent(err)
+		}
+		return err
 	}, backoffStrategy)
 	if err != nil {
+		// If the failure is an error condition match, save partial state so
+		// that the resource is tracked and ModifyPlan can schedule replacement
+		// on the next run.
+		var ece *errorConditionError
+		if errors.As(err, &ece) {
+			diags = resp.State.Set(ctx, plan)
+			resp.Diagnostics.Append(diags...)
+			resp.Diagnostics.Append(
+				resp.Private.SetKey(ctx, "error_condition_met", []byte("true"))...)
+		}
 		resp.Diagnostics.AddError(
 			"Failed to Create Resource",
 			fmt.Sprintf("Could not apply manifest: %s", err),
@@ -660,6 +720,17 @@ func (r *manifestResource) Read(
 		return
 	}
 
+	// Load WO key paths from private state so we can mask them in object.
+	var woKeys []string
+	keysJSON, d := req.Private.GetKey(ctx, "fields_wo_keys")
+	resp.Diagnostics.Append(d...)
+	if len(keysJSON) > 0 {
+		if err := json.Unmarshal(keysJSON, &woKeys); err != nil {
+			log.Printf("[WARN] Failed to unmarshal fields_wo_keys from private state: %v", err)
+			woKeys = nil
+		}
+	}
+
 	// Save prior manifest for reconciliation after read
 	priorManifest := state.Manifest
 
@@ -678,13 +749,79 @@ func (r *manifestResource) Read(
 		return
 	}
 
+	// Mask write-only paths in object so sensitive values don't leak into state.
+	if len(woKeys) > 0 {
+		if err := maskFieldsWoPaths(ctx, &state, woKeys); err != nil {
+			log.Printf("[WARN] Failed to mask fields_wo paths in object: %v", err)
+		}
+	}
+
 	// Reconcile manifest: keep only attributes from prior state to avoid
 	// perpetual diffs from server-generated fields (uid, creationTimestamp, etc.)
 	state.Manifest = reconcileDynamicWithPrior(ctx, priorManifest, state.Manifest)
 
+	// Check error conditions from the error block. If any error condition
+	// matches the live resource state, mark the resource for replacement on
+	// the next plan via a private state flag.
+	errorConditionMet := false
+	if r.providerData != nil && !state.Error.IsNull() && !state.Error.IsUnknown() {
+		var errOn errorModel
+		if d := state.Error.As(ctx, &errOn, basetypes.ObjectAsOptions{}); !d.HasError() {
+			var errorOnFields []waitFieldModel
+			var errorOnConditions []waitConditionModel
+			if !errOn.Fields.IsNull() && !errOn.Fields.IsUnknown() {
+				errOn.Fields.ElementsAs(ctx, &errorOnFields, false)
+			}
+			if !errOn.Conditions.IsNull() && !errOn.Conditions.IsUnknown() {
+				errOn.Conditions.ElementsAs(ctx, &errorOnConditions, false)
+			}
+			if len(errorOnFields) > 0 || len(errorOnConditions) > 0 {
+				apiVersionAny, _ := extractManifestField(ctx, state.Manifest, "apiVersion")
+				kindAny, _ := extractManifestField(ctx, state.Manifest, "kind")
+				name, _ := extractManifestMetadataField(ctx, state.Manifest, "name")
+				namespace, _ := extractManifestMetadataField(ctx, state.Manifest, "namespace")
+
+				rs, err := r.getResourceInterface(
+					ctx,
+					fmt.Sprintf("%v", apiVersionAny),
+					fmt.Sprintf("%v", kindAny),
+					namespace,
+				)
+				if err == nil {
+					if err := checkErrorOnConditions(
+						ctx,
+						rs,
+						name,
+						errorOnFields,
+						errorOnConditions,
+					); err != nil {
+						errorConditionMet = true
+						resp.Diagnostics.AddWarning(
+							"Error Condition Detected",
+							fmt.Sprintf("Resource will be replaced on next apply: %s", err),
+						)
+					}
+				}
+			}
+		}
+	}
+
 	// Set state
 	diags = resp.State.Set(ctx, state)
 	resp.Diagnostics.Append(diags...)
+
+	// Propagate private state (WO keys must survive across refreshes).
+	if len(keysJSON) > 0 {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
+	}
+
+	// Store error_condition_met flag in private state for ModifyPlan.
+	if errorConditionMet {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "error_condition_met", []byte("true"))...)
+	} else {
+		// Clear any previously set flag so the resource is no longer replaced.
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "error_condition_met", []byte("false"))...)
+	}
 
 	// Set identity
 	setResponseIdentity(ctx, resp.Identity, &state, &resp.Diagnostics)
@@ -700,6 +837,29 @@ func (r *manifestResource) Update(
 
 	diags := req.Plan.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Read write-only fields from config (unavailable in plan — TPF nullifies WO in plan/state).
+	var fieldsWo types.Dynamic
+	diags = req.Config.GetAttribute(ctx, path.Root("fields_wo"), &fieldsWo)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Persist the WO key paths in private state so Read can mask them from object.
+	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
+		keys, d := extractFieldsWoKeys(ctx, fieldsWo)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() && len(keys) > 0 {
+			keysJSON, err := json.Marshal(keys)
+			if err == nil {
+				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
+			}
+		}
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -727,9 +887,24 @@ func (r *manifestResource) Update(
 	}
 
 	err := backoff.Retry(func() error {
-		return r.applyManifest(updateCtx, &plan)
+		err := r.applyManifest(updateCtx, &plan, fieldsWo)
+		var ece *errorConditionError
+		if errors.As(err, &ece) {
+			return backoff.Permanent(err)
+		}
+		return err
 	}, backoffStrategy)
 	if err != nil {
+		// If the failure is an error condition match, save the current state so
+		// that the resource is tracked and ModifyPlan can schedule replacement
+		// on the next run.
+		var ece *errorConditionError
+		if errors.As(err, &ece) {
+			diags = resp.State.Set(ctx, plan)
+			resp.Diagnostics.Append(diags...)
+			resp.Diagnostics.Append(
+				resp.Private.SetKey(ctx, "error_condition_met", []byte("true"))...)
+		}
 		resp.Diagnostics.AddError(
 			"Failed to Update Resource",
 			fmt.Sprintf("Could not apply manifest: %s", err),
@@ -1015,6 +1190,20 @@ func (r *manifestResource) ModifyPlan(
 	// Clear the IsImported flag after handling it (so subsequent plans behave normally)
 	if isImported && resp.Private != nil {
 		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "IsImported", []byte(`false`))...)
+	}
+
+	// If Read detected an error condition on the live resource, force replacement.
+	if req.Private != nil {
+		ecmData, d := req.Private.GetKey(ctx, "error_condition_met")
+		resp.Diagnostics.Append(d...)
+		if len(ecmData) > 0 && string(ecmData) == "true" {
+			resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
+			// Clear the flag so it doesn't persist after the replacement plan is executed.
+			if resp.Private != nil {
+				resp.Diagnostics.Append(
+					resp.Private.SetKey(ctx, "error_condition_met", []byte("false"))...)
+			}
+		}
 	}
 
 	// Check fields.immutable — if any listed field changed, require replacement
@@ -1383,18 +1572,60 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 	// in ModifyPlan, not here.
 }
 
+// getResourceInterface returns a dynamic.ResourceInterface for the resource
+// identified by apiVersion, kind, and optional namespace. Reusable in Read,
+// applyManifest, and anywhere else a dynamic client handle is needed.
+func (r *manifestResource) getResourceInterface(
+	ctx context.Context,
+	apiVersion, kind, namespace string,
+) (dynamic.ResourceInterface, error) {
+	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
+	rm, err := r.providerData.getRestMapper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get REST mapper: %w", err)
+	}
+	client, err := r.providerData.getDynamicClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dynamic client: %w", err)
+	}
+	rmapping, err := rm.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get REST mapping: %w", err)
+	}
+	rcl := client.Resource(rmapping.Resource)
+	if namespace != "" {
+		return rcl.Namespace(namespace), nil
+	}
+	return rcl, nil
+}
+
 // applyManifest applies the manifest to Kubernetes using server-side apply,
 // then handles wait conditions. error_on conditions are checked continuously
 // while waiting for success conditions to be met.
 func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
+	fieldsWo types.Dynamic,
 ) error {
 	// Save user-provided manifest before readManifest overwrites it.
 	// The API response includes server-generated fields (uid, creationTimestamp, etc.)
 	// which would change the types.Dynamic object type and cause Terraform's
 	// "wrong final value type" consistency check to fail.
 	plannedManifest := model.Manifest
+
+	// Inject write-only fields into the manifest before applying.
+	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
+		manifestMap, d := dynamicToMap(ctx, model.Manifest)
+		if !d.HasError() && manifestMap != nil {
+			if err := applyFieldsWoToMap(ctx, manifestMap, fieldsWo); err != nil {
+				return fmt.Errorf("failed to inject fields_wo into manifest: %w", err)
+			}
+			mergedDynamic, d := mapToDynamic(ctx, manifestMap)
+			if !d.HasError() {
+				model.Manifest = mergedDynamic
+			}
+		}
+	}
 
 	// Delegate to applyManifestV2 for the actual apply
 	if err := r.applyManifestV2(ctx, model); err != nil {
@@ -1404,6 +1635,16 @@ func (r *manifestResource) applyManifest(
 	// Read back to populate computed fields (ID, status, object) from server response
 	if err := r.readManifest(ctx, model); err != nil {
 		return fmt.Errorf("failed to read manifest after apply: %w", err)
+	}
+
+	// Mask write-only paths in object so sensitive values don't persist in state.
+	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
+		keys, _ := extractFieldsWoKeys(ctx, fieldsWo)
+		if len(keys) > 0 {
+			if err := maskFieldsWoPaths(ctx, model, keys); err != nil {
+				log.Printf("[WARN] Failed to mask fields_wo paths in object: %v", err)
+			}
+		}
 	}
 
 	// Restore user-provided manifest to maintain type compatibility with plan
@@ -1458,33 +1699,11 @@ func (r *manifestResource) applyManifest(
 	kind := fmt.Sprintf("%v", kindAny)
 	apiVersion := fmt.Sprintf("%v", apiVersionAny)
 
-	// Get dynamic client resource interface for waiters
-	getResourceInterface := func() (dynamic.ResourceInterface, error) {
-		gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
-		rm, err := r.providerData.getRestMapper()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get REST mapper: %w", err)
-		}
-		client, err := r.providerData.getDynamicClient()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get dynamic client: %w", err)
-		}
-		rmapping, err := rm.RESTMapping(gvk.GroupKind(), gvk.Version)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get REST mapping: %w", err)
-		}
-		rcl := client.Resource(rmapping.Resource)
-		if namespace != "" {
-			return rcl.Namespace(namespace), nil
-		}
-		return rcl, nil
-	}
-
 	// Handle rollout wait using RolloutWaiter (polymorphichelpers)
 	if hasWait && !wait.Rollout.IsNull() && wait.Rollout.ValueBool() {
 		log.Printf("[INFO] Waiting for rollout of %s/%s", kind, name)
 
-		rs, err := getResourceInterface()
+		rs, err := r.getResourceInterface(ctx, apiVersion, kind, namespace)
 		if err != nil {
 			return fmt.Errorf("failed to set up rollout wait: %w", err)
 		}
@@ -1530,7 +1749,7 @@ func (r *manifestResource) applyManifest(
 	if len(conditions) > 0 || len(waitFields) > 0 {
 		log.Printf("[INFO] Waiting for conditions/fields on %s/%s", kind, name)
 
-		rs, err := getResourceInterface()
+		rs, err := r.getResourceInterface(ctx, apiVersion, kind, namespace)
 		if err != nil {
 			return fmt.Errorf("failed to set up condition/field wait: %w", err)
 		}
@@ -1619,7 +1838,7 @@ func (r *manifestResource) applyManifest(
 		log.Printf("[INFO] Conditions/fields met for %s/%s", kind, name)
 	} else if hasErrorOn {
 		// error_on conditions without any wait block — check once
-		rs, err := getResourceInterface()
+		rs, err := r.getResourceInterface(ctx, apiVersion, kind, namespace)
 		if err != nil {
 			return fmt.Errorf("failed to set up error_on check: %w", err)
 		}
@@ -1687,10 +1906,12 @@ func checkErrorOnConditions(
 		}
 
 		if matched {
-			return fmt.Errorf(
-				"error condition met for %s: field %s=%s matched pattern %s",
-				name, key, stringVal, value,
-			)
+			return &errorConditionError{
+				Msg: fmt.Sprintf(
+					"error condition met for %s: field %s=%s matched pattern %s",
+					name, key, stringVal, value,
+				),
+			}
 		}
 	}
 
@@ -1719,10 +1940,16 @@ func checkErrorOnConditions(
 			if (condType == "" || t == condType) && (condStatus == "" || s == condStatus) {
 				reason, _ := condMap["reason"].(string)
 				message, _ := condMap["message"].(string)
-				return fmt.Errorf(
-					"error condition met for %s: condition type=%s status=%s reason=%s message=%s",
-					name, t, s, reason, message,
-				)
+				return &errorConditionError{
+					Msg: fmt.Sprintf(
+						"error condition met for %s: condition type=%s status=%s reason=%s message=%s",
+						name,
+						t,
+						s,
+						reason,
+						message,
+					),
+				}
 			}
 		}
 	}
@@ -2040,6 +2267,150 @@ func (r *manifestResource) deleteManifest(
 	}
 }
 
+// errorConditionError is a sentinel error indicating that an error condition
+// (from the error block) was matched. It wraps the original message so callers
+// can use errors.As to distinguish it from other failures.
+type errorConditionError struct {
+	Msg string
+}
+
+func (e *errorConditionError) Error() string {
+	return e.Msg
+}
+
 func isNotFoundError(err error) bool {
 	return api.IsNotFoundError(err)
+}
+
+// extractFieldsWoKeys returns the dot-path key strings from a fields_wo dynamic map.
+func extractFieldsWoKeys(ctx context.Context, fieldsWo types.Dynamic) ([]string, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if fieldsWo.IsNull() || fieldsWo.IsUnknown() {
+		return nil, diags
+	}
+	woMap, d := dynamicToMap(ctx, fieldsWo)
+	diags.Append(d...)
+	if diags.HasError() || woMap == nil {
+		return nil, diags
+	}
+	keys := make([]string, 0, len(woMap))
+	for k := range woMap {
+		keys = append(keys, k)
+	}
+	return keys, diags
+}
+
+// applyFieldsWoToMap injects write-only field values into a manifest map at their dot-paths.
+func applyFieldsWoToMap(ctx context.Context, m map[string]any, fieldsWo types.Dynamic) error {
+	if fieldsWo.IsNull() || fieldsWo.IsUnknown() {
+		return nil
+	}
+	woMap, d := dynamicToMap(ctx, fieldsWo)
+	if d.HasError() {
+		return fmt.Errorf("fields_wo must be a map of {\"dot.path\": value}: %v", d)
+	}
+	for key, val := range woMap {
+		parts := strings.Split(key, ".")
+		if err := woSetAtPath(m, parts, val); err != nil {
+			return fmt.Errorf("failed to set path %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// maskFieldsWoPaths removes write-only field paths from model.Object to prevent
+// sensitive values from being stored in Terraform state.
+func maskFieldsWoPaths(ctx context.Context, model *manifestResourceModel, keys []string) error {
+	if model.Object.IsNull() || model.Object.IsUnknown() {
+		return nil
+	}
+	objMap, d := dynamicToMap(ctx, model.Object)
+	if d.HasError() {
+		return fmt.Errorf("failed to convert object to map for WO masking: %v", d)
+	}
+	if objMap == nil {
+		return nil
+	}
+	for _, key := range keys {
+		woDeleteAtPath(objMap, strings.Split(key, "."))
+	}
+	maskedDynamic, d := mapToDynamic(ctx, objMap)
+	if d.HasError() {
+		return fmt.Errorf("failed to convert masked object back to dynamic: %v", d)
+	}
+	model.Object = maskedDynamic
+	return nil
+}
+
+// woSetAtPath recursively sets value at the given path parts within node.
+// Intermediate maps are created if missing. Array elements are accessed by integer index.
+func woSetAtPath(node any, parts []string, value any) error {
+	if len(parts) == 0 {
+		return nil
+	}
+	if len(parts) == 1 {
+		switch n := node.(type) {
+		case map[string]any:
+			n[parts[0]] = value
+			return nil
+		case []any:
+			idx, err := strconv.Atoi(parts[0])
+			if err != nil {
+				return fmt.Errorf("expected integer index, got %q", parts[0])
+			}
+			if idx < 0 || idx >= len(n) {
+				return fmt.Errorf("index %d out of range [0..%d)", idx, len(n))
+			}
+			n[idx] = value
+			return nil
+		}
+		return fmt.Errorf("cannot set key %q on %T", parts[0], node)
+	}
+	switch n := node.(type) {
+	case map[string]any:
+		child, exists := n[parts[0]]
+		if !exists || child == nil {
+			child = make(map[string]any)
+			n[parts[0]] = child
+		}
+		return woSetAtPath(child, parts[1:], value)
+	case []any:
+		idx, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return fmt.Errorf("expected integer index, got %q", parts[0])
+		}
+		if idx < 0 || idx >= len(n) {
+			return fmt.Errorf("index %d out of range [0..%d)", idx, len(n))
+		}
+		return woSetAtPath(n[idx], parts[1:], value)
+	}
+	return fmt.Errorf("cannot navigate into %T at key %q", node, parts[0])
+}
+
+// woDeleteAtPath removes the leaf key at the given path parts from the nested structure.
+// Silently skips missing paths.
+func woDeleteAtPath(node any, parts []string) {
+	if len(parts) == 0 || node == nil {
+		return
+	}
+	if len(parts) == 1 {
+		if n, ok := node.(map[string]any); ok {
+			delete(n, parts[0])
+		}
+		return
+	}
+	switch n := node.(type) {
+	case map[string]any:
+		child, exists := n[parts[0]]
+		if !exists {
+			return
+		}
+		woDeleteAtPath(child, parts[1:])
+	case []any:
+		idx, err := strconv.Atoi(parts[0])
+		if err != nil || idx < 0 || idx >= len(n) {
+			return
+		}
+		woDeleteAtPath(n[idx], parts[1:])
+	}
 }
