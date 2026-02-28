@@ -40,7 +40,7 @@ resource "kubectl_manifest" "statefulset_with_wait" {
   wait = {
     rollout = true
 
-    field = [
+    fields = [
       {
         key   = "status.readyReplicas"
         value = "3"
@@ -96,7 +96,7 @@ resource "kubectl_manifest" "job_with_error_detection" {
 
   # Wait for job completion
   wait = {
-    condition = [
+    conditions = [
       {
         type   = "Complete"
         status = "True"
@@ -105,8 +105,8 @@ resource "kubectl_manifest" "job_with_error_detection" {
   }
 
   # Fail immediately if the job reports a failure condition
-  error_on = {
-    condition = [
+  error = {
+    conditions = [
       {
         type   = "Failed"
         status = "True"
@@ -166,13 +166,17 @@ resource "kubectl_manifest" "apply_only_config" {
   }
 
   # Resource is applied but never deleted by Terraform
-  apply_only = true
+  delete = {
+    skip = true
+  }
 
   # Fields that may be modified by controllers
-  computed_fields = [
-    "metadata.annotations",
-    "metadata.labels",
-  ]
+  fields = {
+    computed = [
+      "metadata.annotations",
+      "metadata.labels",
+    ]
+  }
 }
 
 # Example 6: PVC with foreground cascade deletion
@@ -194,7 +198,9 @@ resource "kubectl_manifest" "pvc" {
     }
   }
 
-  delete_cascade = "Foreground"
+  delete = {
+    cascade = "Foreground"
+  }
 }
 
 # Example 7: Complex application stack

@@ -60,25 +60,23 @@ type manifestResource struct {
 // (apiVersion, kind, metadata, spec, data, etc.) as a single Dynamic value,
 // aligning with the upstream hashicorp/terraform-provider-kubernetes pattern.
 type manifestResourceModel struct {
-	ID              types.String   `tfsdk:"id"`
-	Manifest        types.Dynamic  `tfsdk:"manifest"`
-	Status          types.Dynamic  `tfsdk:"status"`
-	Object          types.Dynamic  `tfsdk:"object"`
-	ComputedFields  types.List     `tfsdk:"computed_fields"`
-	ImmutableFields types.List     `tfsdk:"immutable_fields"`
-	ApplyOnly       types.Bool     `tfsdk:"apply_only"`
-	DeleteCascade   types.String   `tfsdk:"delete_cascade"`
-	Wait            types.Object   `tfsdk:"wait"`
-	ErrorOn         types.Object   `tfsdk:"error_on"`
-	FieldManager    types.Object   `tfsdk:"field_manager"`
-	Timeouts        timeouts.Value `tfsdk:"timeouts"`
+	ID           types.String   `tfsdk:"id"`
+	Manifest     types.Dynamic  `tfsdk:"manifest"`
+	Status       types.Dynamic  `tfsdk:"status"`
+	Object       types.Dynamic  `tfsdk:"object"`
+	Fields       types.Object   `tfsdk:"fields"`
+	Delete       types.Object   `tfsdk:"delete"`
+	Wait         types.Object   `tfsdk:"wait"`
+	Error        types.Object   `tfsdk:"error"`
+	FieldManager types.Object   `tfsdk:"field_manager"`
+	Timeouts     timeouts.Value `tfsdk:"timeouts"`
 }
 
-// waitModel describes the wait block.
+// waitModel describes the wait attribute.
 type waitModel struct {
 	Rollout    types.Bool `tfsdk:"rollout"`
-	Fields     types.List `tfsdk:"field"`
-	Conditions types.List `tfsdk:"condition"`
+	Fields     types.List `tfsdk:"fields"`
+	Conditions types.List `tfsdk:"conditions"`
 }
 
 // waitFieldModel describes a field matcher in the wait block.
@@ -94,12 +92,24 @@ type waitConditionModel struct {
 	Status types.String `tfsdk:"status"`
 }
 
-// errorOnModel describes the error_on block.
+// errorModel describes the error attribute.
 // Error conditions are checked continuously while waiting for success conditions.
 // If any error condition matches, the apply fails immediately.
-type errorOnModel struct {
-	Fields     types.List `tfsdk:"field"`
-	Conditions types.List `tfsdk:"condition"`
+type errorModel struct {
+	Fields     types.List `tfsdk:"fields"`
+	Conditions types.List `tfsdk:"conditions"`
+}
+
+// fieldsModel describes the fields attribute.
+type fieldsModel struct {
+	Computed  types.List `tfsdk:"computed"`
+	Immutable types.List `tfsdk:"immutable"`
+}
+
+// deleteModel describes the delete attribute.
+type deleteModel struct {
+	Skip    types.Bool   `tfsdk:"skip"`
+	Cascade types.String `tfsdk:"cascade"`
 }
 
 // fieldManagerModel describes the field_manager block.
@@ -116,18 +126,18 @@ type manifestIdentityModel struct {
 	Namespace  types.String `tfsdk:"namespace"`
 }
 
-// waitBlockAttrTypes returns the attribute types map for the wait block.
+// waitBlockAttrTypes returns the attribute types map for the wait attribute.
 func waitBlockAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
 		"rollout": types.BoolType,
-		"field": types.ListType{ElemType: types.ObjectType{
+		"fields": types.ListType{ElemType: types.ObjectType{
 			AttrTypes: map[string]attr.Type{
 				"key":        types.StringType,
 				"value":      types.StringType,
 				"value_type": types.StringType,
 			},
 		}},
-		"condition": types.ListType{ElemType: types.ObjectType{
+		"conditions": types.ListType{ElemType: types.ObjectType{
 			AttrTypes: map[string]attr.Type{
 				"type":   types.StringType,
 				"status": types.StringType,
@@ -136,22 +146,38 @@ func waitBlockAttrTypes() map[string]attr.Type {
 	}
 }
 
-// errorOnBlockAttrTypes returns the attribute types map for the error_on block.
-func errorOnBlockAttrTypes() map[string]attr.Type {
+// errorAttrTypes returns the attribute types map for the error attribute.
+func errorAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
-		"field": types.ListType{ElemType: types.ObjectType{
+		"fields": types.ListType{ElemType: types.ObjectType{
 			AttrTypes: map[string]attr.Type{
 				"key":        types.StringType,
 				"value":      types.StringType,
 				"value_type": types.StringType,
 			},
 		}},
-		"condition": types.ListType{ElemType: types.ObjectType{
+		"conditions": types.ListType{ElemType: types.ObjectType{
 			AttrTypes: map[string]attr.Type{
 				"type":   types.StringType,
 				"status": types.StringType,
 			},
 		}},
+	}
+}
+
+// fieldsAttrTypes returns the attribute types map for the fields attribute.
+func fieldsAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"computed":  types.ListType{ElemType: types.StringType},
+		"immutable": types.ListType{ElemType: types.StringType},
+	}
+}
+
+// deleteAttrTypes returns the attribute types map for the delete attribute.
+func deleteAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"skip":    types.BoolType,
+		"cascade": types.StringType,
 	}
 }
 
@@ -282,34 +308,45 @@ func (r *manifestResource) Schema(
 					dynamicplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"computed_fields": schema.ListAttribute{
-				ElementType: types.StringType,
-				Optional:    true,
-				MarkdownDescription: "List of manifest fields whose values may be altered by the API server during apply. " +
-					"Defaults to: `[\"metadata.annotations\", \"metadata.labels\"]`",
-			},
-			"immutable_fields": schema.ListAttribute{
-				ElementType: types.StringType,
-				Optional:    true,
-				MarkdownDescription: "List of manifest field paths that are immutable after creation. " +
-					"If any of these fields change, the resource will be replaced (destroyed and re-created). " +
-					"Uses dot-separated paths (e.g., `spec.selector`).",
-			},
-			"apply_only": schema.BoolAttribute{
+			"fields": schema.SingleNestedAttribute{
 				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
-				MarkdownDescription: "Apply only (never delete the resource). Default: false",
+				MarkdownDescription: "Configure field tracking options.",
+				Attributes: map[string]schema.Attribute{
+					"computed": schema.ListAttribute{
+						ElementType: types.StringType,
+						Optional:    true,
+						MarkdownDescription: "List of manifest fields whose values may be altered by the API server during apply. " +
+							"Defaults to: `[\"metadata.annotations\", \"metadata.labels\"]`",
+					},
+					"immutable": schema.ListAttribute{
+						ElementType: types.StringType,
+						Optional:    true,
+						MarkdownDescription: "List of manifest field paths that are immutable after creation. " +
+							"If any of these fields change, the resource will be replaced (destroyed and re-created). " +
+							"Uses dot-separated paths (e.g., `spec.selector`).",
+					},
+				},
 			},
-			"delete_cascade": schema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "Cascade mode for deletion: Background or Foreground. " +
-					"Default: Background",
-				Validators: []validator.String{
-					stringvalidator.OneOf(
-						string(meta_v1.DeletePropagationBackground),
-						string(meta_v1.DeletePropagationForeground),
-					),
+			"delete": schema.SingleNestedAttribute{
+				Optional:            true,
+				MarkdownDescription: "Configure deletion behavior.",
+				Attributes: map[string]schema.Attribute{
+					"skip": schema.BoolAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             booldefault.StaticBool(false),
+						MarkdownDescription: "If true, skip deletion of the resource when destroying. Default: false",
+					},
+					"cascade": schema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "Cascade mode for deletion: Background or Foreground. Default: Background",
+						Validators: []validator.String{
+							stringvalidator.OneOf(
+								string(meta_v1.DeletePropagationBackground),
+								string(meta_v1.DeletePropagationForeground),
+							),
+						},
+					},
 				},
 			},
 			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
@@ -325,7 +362,7 @@ func (r *manifestResource) Schema(
 						Optional:            true,
 						MarkdownDescription: "Wait for rollout to complete on resources that support `kubectl rollout status`.",
 					},
-					"field": schema.ListNestedAttribute{
+					"fields": schema.ListNestedAttribute{
 						Optional: true,
 						MarkdownDescription: "Wait for a resource field to reach an expected value. " +
 							"Multiple entries can be specified; all must match.",
@@ -351,7 +388,7 @@ func (r *manifestResource) Schema(
 							},
 						},
 					},
-					"condition": schema.ListNestedAttribute{
+					"conditions": schema.ListNestedAttribute{
 						Optional:            true,
 						MarkdownDescription: "Wait for status conditions to match.",
 						NestedObject: schema.NestedAttributeObject{
@@ -369,13 +406,13 @@ func (r *manifestResource) Schema(
 					},
 				},
 			},
-			"error_on": schema.SingleNestedAttribute{
+			"error": schema.SingleNestedAttribute{
 				Optional: true,
 				MarkdownDescription: "Define error conditions that are checked continuously while waiting for success conditions. " +
 					"If any error condition matches, the apply fails immediately. " +
 					"Use this to detect error states such as CrashLoopBackOff or Failed status.",
 				Attributes: map[string]schema.Attribute{
-					"field": schema.ListNestedAttribute{
+					"fields": schema.ListNestedAttribute{
 						Optional: true,
 						MarkdownDescription: "Fail if a resource field matches an error pattern. " +
 							"Multiple entries can be specified; any match triggers failure.",
@@ -401,7 +438,7 @@ func (r *manifestResource) Schema(
 							},
 						},
 					},
-					"condition": schema.ListNestedAttribute{
+					"conditions": schema.ListNestedAttribute{
 						Optional:            true,
 						MarkdownDescription: "Fail if a status condition matches. Any match triggers failure.",
 						NestedObject: schema.NestedAttributeObject{
@@ -546,7 +583,7 @@ func (r *manifestResource) ValidateConfig(
 				resp.Diagnostics.AddAttributeError(
 					path.Root("wait"),
 					"Invalid wait configuration",
-					"You may only set one of rollout, field, or condition in a wait block.",
+					"You may only set one of rollout, fields, or conditions in a wait block.",
 				)
 			}
 		}
@@ -722,10 +759,14 @@ func (r *manifestResource) Delete(
 		return
 	}
 
-	// Check if apply_only mode
-	if !state.ApplyOnly.IsNull() && state.ApplyOnly.ValueBool() {
-		log.Printf("[INFO] apply_only is set, skipping deletion")
-		return
+	// Check if delete.skip mode
+	if !state.Delete.IsNull() && !state.Delete.IsUnknown() {
+		var del deleteModel
+		d := state.Delete.As(ctx, &del, basetypes.ObjectAsOptions{})
+		if !d.HasError() && !del.Skip.IsNull() && del.Skip.ValueBool() {
+			log.Printf("[INFO] delete.skip is set, skipping deletion")
+			return
+		}
 	}
 
 	// Delete the resource from Kubernetes
@@ -829,17 +870,15 @@ func (r *manifestResource) ImportState(
 	}
 
 	model := manifestResourceModel{
-		ID:              types.StringValue(req.ID),
-		Manifest:        manifestDynamic,
-		Status:          types.DynamicNull(),
-		Object:          types.DynamicNull(),
-		ComputedFields:  types.ListNull(types.StringType),
-		ImmutableFields: types.ListNull(types.StringType),
-		ApplyOnly:       types.BoolValue(false),
-		DeleteCascade:   types.StringNull(),
-		Wait:            types.ObjectNull(waitBlockAttrTypes()),
-		ErrorOn:         types.ObjectNull(errorOnBlockAttrTypes()),
-		FieldManager:    types.ObjectNull(fieldManagerBlockAttrTypes()),
+		ID:           types.StringValue(req.ID),
+		Manifest:     manifestDynamic,
+		Status:       types.DynamicNull(),
+		Object:       types.DynamicNull(),
+		Fields:       types.ObjectNull(fieldsAttrTypes()),
+		Delete:       types.ObjectNull(deleteAttrTypes()),
+		Wait:         types.ObjectNull(waitBlockAttrTypes()),
+		Error:        types.ObjectNull(errorAttrTypes()),
+		FieldManager: types.ObjectNull(fieldManagerBlockAttrTypes()),
 		Timeouts: timeouts.Value{
 			Object: types.ObjectNull(map[string]attr.Type{
 				"create": types.StringType,
@@ -978,38 +1017,43 @@ func (r *manifestResource) ModifyPlan(
 		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "IsImported", []byte(`false`))...)
 	}
 
-	// Check immutable_fields — if any listed field changed, require replacement
-	if !plan.ImmutableFields.IsNull() && !plan.ImmutableFields.IsUnknown() {
-		var immutablePaths []string
-		plan.ImmutableFields.ElementsAs(ctx, &immutablePaths, false)
-		if len(immutablePaths) > 0 {
-			planMap, _ := dynamicToMap(ctx, plan.Manifest)
-			stateMap, _ := dynamicToMap(ctx, state.Manifest)
-			if planMap != nil && stateMap != nil {
-				for _, fieldPath := range immutablePaths {
-					atp, err := api.FieldPathToTftypesPath(fieldPath)
-					if err != nil {
-						resp.Diagnostics.AddAttributeWarning(
-							path.Root("immutable_fields"),
-							"Invalid immutable field path",
-							fmt.Sprintf("Could not parse path %q: %s", fieldPath, err),
-						)
-						continue
-					}
-					planVal, planOk := walkMapByTFPath(planMap, atp)
-					stateVal, stateOk := walkMapByTFPath(stateMap, atp)
-					if planOk && stateOk &&
-						fmt.Sprintf("%v", planVal) != fmt.Sprintf("%v", stateVal) {
-						resp.RequiresReplace = append(resp.RequiresReplace, path.Root("manifest"))
-						break
+	// Check fields.immutable — if any listed field changed, require replacement
+	if !plan.Fields.IsNull() && !plan.Fields.IsUnknown() {
+		var fm fieldsModel
+		if d := plan.Fields.As(ctx, &fm, basetypes.ObjectAsOptions{}); !d.HasError() {
+			if !fm.Immutable.IsNull() && !fm.Immutable.IsUnknown() {
+				var immutablePaths []string
+				fm.Immutable.ElementsAs(ctx, &immutablePaths, false)
+				if len(immutablePaths) > 0 {
+					planMap, _ := dynamicToMap(ctx, plan.Manifest)
+					stateMap, _ := dynamicToMap(ctx, state.Manifest)
+					if planMap != nil && stateMap != nil {
+						for _, fieldPath := range immutablePaths {
+							atp, err := api.FieldPathToTftypesPath(fieldPath)
+							if err != nil {
+								resp.Diagnostics.AddAttributeWarning(
+									path.Root("fields"),
+									"Invalid immutable field path",
+									fmt.Sprintf("Could not parse path %q: %s", fieldPath, err),
+								)
+								continue
+							}
+							planVal, planOk := walkMapByTFPath(planMap, atp)
+							stateVal, stateOk := walkMapByTFPath(stateMap, atp)
+							if planOk && stateOk &&
+								fmt.Sprintf("%v", planVal) != fmt.Sprintf("%v", stateVal) {
+								resp.RequiresReplace = append(
+									resp.RequiresReplace,
+									path.Root("manifest"),
+								)
+								break
+							}
+						}
 					}
 				}
 			}
 		}
 	}
-
-	// Save original plan manifest before OpenAPI morphing for change detection.
-	origManifest := plan.Manifest
 
 	// Attempt OpenAPI type resolution for computed field handling
 	apiVersionStr := fmt.Sprintf("%v", planAPIVersion)
@@ -1022,9 +1066,12 @@ func (r *manifestResource) ModifyPlan(
 	}
 
 	// Determine if user-provided manifest changed between plan and state.
+	// Compare plan.Manifest AFTER OpenAPI morphing so both plan and state are in
+	// the same full-schema shape. Comparing the pre-morph (compact) user plan to
+	// the post-morph state would always differ even when nothing actually changed.
 	// If something changed, status/object must be Unknown (provider will produce new values).
 	// If nothing changed, preserve state values to prevent perpetual diffs.
-	hasChange := !origManifest.Equal(state.Manifest)
+	hasChange := !plan.Manifest.Equal(state.Manifest)
 
 	if hasChange {
 		plan.Status = types.DynamicUnknown()
@@ -1105,16 +1152,21 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 
 	// Build computed fields map
 	computedFields := make(map[string]*tftypes.AttributePath)
-	if !plan.ComputedFields.IsNull() && !plan.ComputedFields.IsUnknown() {
-		var cfList []string
-		plan.ComputedFields.ElementsAs(ctx, &cfList, false)
-		for _, cf := range cfList {
-			atp, err := api.FieldPathToTftypesPath(cf)
-			if err != nil {
-				log.Printf("[DEBUG] Could not parse computed_fields path %s: %v", cf, err)
-				continue
+	if !plan.Fields.IsNull() && !plan.Fields.IsUnknown() {
+		var fm fieldsModel
+		if d := plan.Fields.As(ctx, &fm, basetypes.ObjectAsOptions{}); !d.HasError() {
+			if !fm.Computed.IsNull() && !fm.Computed.IsUnknown() {
+				var cfList []string
+				fm.Computed.ElementsAs(ctx, &cfList, false)
+				for _, cf := range cfList {
+					atp, err := api.FieldPathToTftypesPath(cf)
+					if err != nil {
+						log.Printf("[DEBUG] Could not parse fields.computed path %s: %v", cf, err)
+						continue
+					}
+					computedFields[atp.String()] = atp
+				}
 			}
-			computedFields[atp.String()] = atp
 		}
 	}
 	if len(computedFields) == 0 {
@@ -1153,8 +1205,25 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 		objectMap, d := dynamicToMap(ctx, state.Object)
 		resp.Diagnostics.Append(d...)
 		if !resp.Diagnostics.HasError() && objectMap != nil {
+			// Strip metadata.managedFields before OpenAPI conversion.
+			// managedFields entries have heterogeneous fieldsV1 schemas (each field
+			// manager tracks different fields), causing sliceToTFListValue to fail
+			// on type-homogeneity checks. It is not needed for plan diffing.
+			objMapCopy := make(map[string]any, len(objectMap))
+			for k, v := range objectMap {
+				objMapCopy[k] = v
+			}
+			if meta, ok := objMapCopy["metadata"].(map[string]any); ok {
+				metaCopy := make(map[string]any, len(meta))
+				for k, v := range meta {
+					metaCopy[k] = v
+				}
+				delete(metaCopy, "managedFields")
+				objMapCopy["metadata"] = metaCopy
+			}
+
 			priorObjTfValue, err := payload.ToTFValue(
-				objectMap, objectType, hints, tftypes.NewAttributePath(),
+				objMapCopy, objectType, hints, tftypes.NewAttributePath(),
 			)
 			if err == nil {
 				hasPrior = true
@@ -1264,6 +1333,13 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 		}
 	}
 
+	// Replace unknowns with null before converting back to map.
+	// FromTFValue cannot handle unknown values (it returns an error), so computed
+	// fields that were marked UnknownValue by the transform above must be nulled
+	// here. Kubernetes null fields are stripped by api.MapRemoveNulls during apply,
+	// so no computed-field value is incorrectly sent to the server.
+	completePlan = morph.UnknownToNull(completePlan)
+
 	// Convert back to map[string]any for framework
 	resultMap, err := payload.FromTFValue(completePlan, nil, tftypes.NewAttributePath())
 	if err != nil {
@@ -1276,8 +1352,28 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 		return
 	}
 
-	// Update plan manifest from morphed result (writing back the entire manifest)
-	manifestDynamic, d := mapToDynamic(ctx, resultContent)
+	// Reconcile back to the user-configured (compact) form.
+	//
+	// resultContent contains all OpenAPI fields — computed fields are null (from
+	// UnknownToNull above) and in the hasPrior path, computed fields carry forward
+	// their actual server values. If we stored this full map in plan.Manifest:
+	//
+	//   - state.Manifest (restored from plannedManifest in applyManifest) = null for
+	//     computed fields
+	//   - plan.Manifest on the next Update = actual priorObj values for computed fields
+	//   - hasChange = always true, even with no user changes → status/object always
+	//     "(known after apply)"
+	//
+	// By filtering to only the keys the user explicitly configured (proposedManifestMap),
+	// plan.Manifest and state.Manifest stay in the same compact shape across
+	// Plan → Apply → Plan cycles, making hasChange a stable comparison.
+	//
+	// Fields the user didn't configure (annotations, labels, server-injected fields)
+	// are available via the `object` computed attribute on the resource.
+	filteredContent := deepReconcileMaps(proposedManifestMap, resultContent)
+
+	// Update plan manifest from reconciled (compact) result
+	manifestDynamic, d := mapToDynamic(ctx, filteredContent)
 	resp.Diagnostics.Append(d...)
 	if !resp.Diagnostics.HasError() {
 		plan.Manifest = manifestDynamic
@@ -1313,13 +1409,13 @@ func (r *manifestResource) applyManifest(
 	// Restore user-provided manifest to maintain type compatibility with plan
 	model.Manifest = plannedManifest
 
-	// Parse error_on conditions from top-level block
+	// Parse error conditions from top-level attribute
 	var errorOnFields []waitFieldModel
 	var errorOnConditions []waitConditionModel
 	hasErrorOn := false
-	if !model.ErrorOn.IsNull() && !model.ErrorOn.IsUnknown() {
-		var errOn errorOnModel
-		d := model.ErrorOn.As(ctx, &errOn, basetypes.ObjectAsOptions{})
+	if !model.Error.IsNull() && !model.Error.IsUnknown() {
+		var errOn errorModel
+		d := model.Error.As(ctx, &errOn, basetypes.ObjectAsOptions{})
 		if !d.HasError() {
 			if !errOn.Fields.IsNull() && !errOn.Fields.IsUnknown() {
 				errOn.Fields.ElementsAs(ctx, &errorOnFields, false)

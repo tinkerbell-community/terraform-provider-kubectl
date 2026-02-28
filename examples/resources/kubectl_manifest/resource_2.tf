@@ -21,7 +21,7 @@ resource "kubectl_manifest" "test" {
   }
 
   wait = {
-    field = [
+    fields = [
       {
         key   = "status.containerStatuses.[0].ready"
         value = "true"
@@ -36,7 +36,7 @@ resource "kubectl_manifest" "test" {
         value_type = "regex"
       },
     ]
-    condition = [
+    conditions = [
       {
         type   = "ContainersReady"
         status = "True"
@@ -49,8 +49,8 @@ resource "kubectl_manifest" "test" {
   }
 
   # Fail immediately if the pod enters a crash loop
-  error_on = {
-    field = [
+  error = {
+    fields = [
       {
         key   = "status.containerStatuses.[0].state.waiting.reason"
         value = "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"

@@ -231,7 +231,9 @@ resource "kubectl_manifest" "test" {
 func configMapApplyOnlyConfig(name, namespace string) string {
 	return fmt.Sprintf(`
 resource "kubectl_manifest" "test" {
-  apply_only = true
+  delete = {
+    skip = true
+  }
 
   manifest = {
     apiVersion = "v1"

@@ -41,7 +41,7 @@ func TestIntegration_Patch_AddLabel(t *testing.T) {
 			).Namespace("default").Get(context.Background(), cmName, meta_v1.GetOptions{})
 			if err != nil {
 				// ConfigMap was destroyed by the manifest resource, that's fine
-				return nil
+				return nil //nolint:nilerr
 			}
 			labels := cm.GetLabels()
 			if _, ok := labels["patched-by"]; ok {

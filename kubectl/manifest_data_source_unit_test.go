@@ -188,7 +188,9 @@ func TestConvertToObject_openAPIMetaPreserved(t *testing.T) {
 		t.Fatalf("merged metadata: want tftypes.Object, got %T", metaT)
 	}
 	if _, ok := metaObj.AttributeTypes["extra"]; !ok {
-		t.Error("merged metadata: OpenAPI 'extra' field not preserved (OpenAPI should take precedence)")
+		t.Error(
+			"merged metadata: OpenAPI 'extra' field not preserved (OpenAPI should take precedence)",
+		)
 	}
 }
 

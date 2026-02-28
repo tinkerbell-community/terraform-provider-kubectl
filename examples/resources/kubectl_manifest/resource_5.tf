@@ -14,5 +14,7 @@ resource "kubectl_manifest" "test" {
     }]
   }
 
-  computed_fields = ["webhooks.0.clientConfig.caBundle"]
+  fields = {
+    computed = ["webhooks.0.clientConfig.caBundle"]
+  }
 }

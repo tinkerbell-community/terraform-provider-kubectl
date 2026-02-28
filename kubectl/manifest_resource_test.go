@@ -360,7 +360,7 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -559,7 +559,9 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  immutable_fields = ["data.frozen"]
+  fields = {
+    immutable = ["data.frozen"]
+  }
 }
 `, name, value, frozen)
 }
@@ -599,9 +601,11 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  immutable_fields = ["spec.selector.matchLabels"]
+  fields = {
+    immutable = ["spec.selector.matchLabels"]
+  }
 
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -625,7 +629,9 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  immutable_fields = ["data.immut1", "data.immut2"]
+  fields = {
+    immutable = ["data.immut1", "data.immut2"]
+  }
 }
 `, name, field1, field2)
 }
@@ -645,7 +651,9 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  immutable_fields = ["data.nonexistent_field"]
+  fields = {
+    immutable = ["data.nonexistent_field"]
+  }
 }
 `, name, value)
 }
@@ -687,7 +695,7 @@ func TestAccResourceKubectlManifest_ConfigMap_CRUD(t *testing.T) {
 				ImportState:             true,
 				ImportStateId:           fmt.Sprintf("v1//ConfigMap//%s//default", name),
 				ImportStateVerify:       false,
-				ImportStateVerifyIgnore: []string{"computed_fields"},
+				ImportStateVerifyIgnore: []string{"fields"},
 			},
 		},
 	})
@@ -724,7 +732,7 @@ func TestAccResourceKubectlManifest_Namespace_CRUD(t *testing.T) {
 				ImportState:             true,
 				ImportStateId:           fmt.Sprintf("v1//Namespace//%s", name),
 				ImportStateVerify:       false,
-				ImportStateVerifyIgnore: []string{"computed_fields"},
+				ImportStateVerifyIgnore: []string{"fields"},
 			},
 		},
 	})
@@ -999,7 +1007,7 @@ func TestAccResourceKubectlManifest_applyOnly(t *testing.T) {
 				Config: configMapApplyOnlyConfig(name, "default"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
-					resource.TestCheckResourceAttr(resourceName, "apply_only", "true"),
+					resource.TestCheckResourceAttr(resourceName, "delete.skip", "true"),
 				),
 			},
 		},
@@ -1156,11 +1164,13 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  computed_fields = [
-    "metadata.annotations",
-    "metadata.labels",
-    "metadata.finalizers",
-  ]
+  fields = {
+    computed = [
+      "metadata.annotations",
+      "metadata.labels",
+      "metadata.finalizers",
+    ]
+  }
 }
 `, name)
 }
@@ -1180,7 +1190,7 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  field_manager {
+  field_manager = {
     name = %q
   }
 }
@@ -1202,7 +1212,7 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  field_manager {
+  field_manager = {
     name            = "TerraformForce"
     force_conflicts = true
   }
@@ -1221,11 +1231,13 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
-    field {
-      key   = "status.phase"
-      value = "Active"
-    }
+  wait = {
+    fields = [
+      {
+        key   = "status.phase"
+        value = "Active"
+      }
+    ]
   }
 }
 `, name)
@@ -1242,12 +1254,14 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
-    field {
-      key        = "status.phase"
-      value      = "Activ.*"
-      value_type = "regex"
-    }
+  wait = {
+    fields = [
+      {
+        key        = "status.phase"
+        value      = "Activ.*"
+        value_type = "regex"
+      }
+    ]
   }
 }
 `, name)
@@ -1264,11 +1278,13 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
-    condition {
-      type   = "NamespacesFinalizersRemaining"
-      status = "False"
-    }
+  wait = {
+    conditions = [
+      {
+        type   = "NamespacesFinalizersRemaining"
+        status = "False"
+      }
+    ]
   }
 }
 `, name)
@@ -1309,7 +1325,7 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -1331,7 +1347,9 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  delete_cascade = %q
+  delete = {
+    cascade = %q
+  }
 }
 `, name, cascade)
 }
@@ -1413,18 +1431,22 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
-    field {
-      key   = "status.phase"
-      value = "Running"
-    }
+  wait = {
+    fields = [
+      {
+        key   = "status.phase"
+        value = "Running"
+      }
+    ]
   }
 
-  error_on {
-    field {
-      key   = "status.containerStatuses.0.state.waiting.reason"
-      value = "ErrImagePull|ImagePullBackOff"
-    }
+  error = {
+    fields = [
+      {
+        key   = "status.containerStatuses.0.state.waiting.reason"
+        value = "ErrImagePull|ImagePullBackOff"
+      }
+    ]
   }
 
   timeouts = {

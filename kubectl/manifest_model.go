@@ -226,8 +226,16 @@ func deepReconcileMaps(prior, api map[string]any) map[string]any {
 			continue
 		}
 
-		// Scalar or type mismatch: use API value
-		result[k] = apiVal
+		// Scalar or type mismatch: use API value, but don't overwrite a
+		// configured non-null prior value with a null from the remote.
+		// The API server (via OpenAPI schema filling + morph.UnknownToNull)
+		// sets absent optional fields to null; we should not let those nulls
+		// erase fields the user explicitly configured.
+		if apiVal == nil && priorVal != nil {
+			result[k] = priorVal
+		} else {
+			result[k] = apiVal
+		}
 	}
 	return result
 }
@@ -246,6 +254,9 @@ func deepReconcileSlices(prior, api []any) []any {
 		apiMap, apiIsMap := api[i].(map[string]any)
 		if priorIsMap && apiIsMap {
 			result[i] = deepReconcileMaps(priorMap, apiMap)
+		} else if api[i] == nil && priorElem != nil {
+			// Don't overwrite a non-null prior element with null from remote.
+			result[i] = priorElem
 		} else {
 			result[i] = api[i]
 		}

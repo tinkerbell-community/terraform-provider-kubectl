@@ -158,6 +158,7 @@ func (a *patchAction) Invoke(
 	if !config.ForceConflicts.IsNull() && !config.ForceConflicts.IsUnknown() {
 		forceConflicts = config.ForceConflicts.ValueBool()
 	}
+	_ = forceConflicts // force_conflicts is only applicable to SSA; kept for schema compatibility
 
 	// Convert patch Dynamic to map
 	patchMap, diags := dynamicToMap(ctx, config.Patch)
@@ -235,6 +236,21 @@ func (a *patchAction) Invoke(
 		return
 	}
 
+	patchCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	current, err := restClient.ResourceInterface.Get(patchCtx, name, meta_v1.GetOptions{})
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to Get Current Resource",
+			fmt.Sprintf("Could not get current resource for array merge: %s", err),
+		)
+		return
+	}
+
+	mergedContent := mergeArraysWithCurrent(current.Object, uo.Object)
+	uo.SetUnstructuredContent(mergedContent)
+
 	// Marshal to JSON
 	jsonData, err := uo.MarshalJSON()
 	if err != nil {
@@ -245,18 +261,17 @@ func (a *patchAction) Invoke(
 		return
 	}
 
-	// Apply with a timeout
-	patchCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
+	// Apply using Merge Patch (RFC 7396) — only the specified fields are changed;
+	// fields absent from the patch are left untouched on the server.
+	// MergePatchType works for both native resources and CRDs, unlike
+	// StrategicMergePatchType which is only supported by native K8s types.
 	result, err := restClient.ResourceInterface.Patch(
 		patchCtx,
 		name,
-		k8stypes.ApplyPatchType,
+		k8stypes.MergePatchType,
 		jsonData,
 		meta_v1.PatchOptions{
 			FieldManager: fieldManager,
-			Force:        &forceConflicts,
 		},
 	)
 	if err != nil {

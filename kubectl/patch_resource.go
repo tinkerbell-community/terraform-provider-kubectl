@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
+	"reflect"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -364,7 +366,7 @@ func (r *patchResource) ModifyPlan(
 func (r *patchResource) getFieldManagerConfig(
 	ctx context.Context,
 	model *patchResourceModel,
-) (string, bool, diag.Diagnostics) {
+) (string, bool, diag.Diagnostics) { //nolint:unparam
 	fieldManagerName := "Terraform"
 	forceConflicts := false
 
@@ -387,7 +389,7 @@ func (r *patchResource) getFieldManagerConfig(
 	return fieldManagerName, forceConflicts, nil
 }
 
-// buildPatchUnstructured constructs the Unstructured patch payload from the model.
+// buildPatchUnstructured constructs the Unstructured merge patch payload from the model.
 // The patch payload includes apiVersion, kind, metadata (name + namespace), and
 // all fields from the patch Dynamic attribute merged at the top level.
 func (r *patchResource) buildPatchUnstructured(
@@ -407,7 +409,7 @@ func (r *patchResource) buildPatchUnstructured(
 		return nil, diags
 	}
 
-	// Build the SSA patch payload: must contain apiVersion, kind, metadata
+	// Build the merge patch payload: include apiVersion, kind, metadata for attribution
 	payload := map[string]any{
 		"apiVersion": model.APIVersion.ValueString(),
 		"kind":       model.Kind.ValueString(),
@@ -424,9 +426,7 @@ func (r *patchResource) buildPatchUnstructured(
 	// If the patch contains metadata fields (e.g., labels, annotations), merge them
 	if patchMeta, ok := patchMap["metadata"]; ok {
 		if patchMetaMap, ok := patchMeta.(map[string]any); ok {
-			for k, v := range patchMetaMap {
-				metadata[k] = v
-			}
+			maps.Copy(metadata, patchMetaMap)
 		}
 	}
 	payload["metadata"] = metadata
@@ -476,14 +476,31 @@ func (r *patchResource) getRestClient(
 	return restClient, nil
 }
 
-// applyPatch applies the SSA patch to the target resource.
+// applyPatch applies the patch to the target resource.
+// Array fields are merged with the existing resource (unique-append) rather than replaced,
+// so multiple independent patches managing different items in the same array coexist safely.
 func (r *patchResource) applyPatch(
 	ctx context.Context,
 	model *patchResourceModel,
 ) error {
-	fieldManagerName, forceConflicts, diags := r.getFieldManagerConfig(ctx, model)
+	fieldManagerName, _, diags := r.getFieldManagerConfig(ctx, model)
 	if diags.HasError() {
 		return fmt.Errorf("failed to get field manager config: %v", diags)
+	}
+
+	restClient, err := r.getRestClient(ctx, model)
+	if err != nil {
+		return err
+	}
+
+	// Fetch the current resource so we can merge array fields rather than replace them.
+	current, err := restClient.ResourceInterface.Get(
+		ctx,
+		model.Name.ValueString(),
+		meta_v1.GetOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get current resource for array merge: %w", err)
 	}
 
 	uo, d := r.buildPatchUnstructured(ctx, model)
@@ -491,29 +508,31 @@ func (r *patchResource) applyPatch(
 		return fmt.Errorf("failed to build patch payload: %v", d)
 	}
 
+	// Merge array fields in the patch with their live counterparts so we append
+	// rather than overwrite. Scalar and map fields pass through unchanged.
+	mergedContent := mergeArraysWithCurrent(current.Object, uo.Object)
+	uo.SetUnstructuredContent(mergedContent)
+
 	log.Printf("[DEBUG] Applying patch to %s/%s/%s",
 		model.APIVersion.ValueString(), model.Kind.ValueString(), model.Name.ValueString())
 
-	restClient, err := r.getRestClient(ctx, model)
-	if err != nil {
-		return err
-	}
-
-	// Marshal to JSON for SSA
+	// Marshal to JSON for the merge patch
 	jsonData, err := uo.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("failed to marshal patch to JSON: %w", err)
 	}
 
-	// Apply using Server-Side Apply
+	// Apply using Merge Patch (RFC 7396) — only the specified fields are changed;
+	// fields absent from the patch are left untouched on the server.
+	// MergePatchType works for both native resources and CRDs, unlike
+	// StrategicMergePatchType which is only supported by native K8s types.
 	result, err := restClient.ResourceInterface.Patch(
 		ctx,
 		model.Name.ValueString(),
-		k8stypes.ApplyPatchType,
+		k8stypes.MergePatchType,
 		jsonData,
 		meta_v1.PatchOptions{
 			FieldManager: fieldManagerName,
-			Force:        &forceConflicts,
 		},
 	)
 	if err != nil {
@@ -552,45 +571,61 @@ func (r *patchResource) readPatchedResource(
 	return r.setObjectFromResult(ctx, result, model)
 }
 
-// revertPatch reverts the patch by applying an empty SSA patch with the same
-// field manager. This causes the API server to remove all fields previously
-// owned by this field manager that are not in the new (empty) apply request.
+// revertPatch reverts the patch by applying an inverse merge patch.
+// Scalar fields are nullified (deleted). Array fields have the patch items removed
+// from the live resource's array, leaving any items added by other managers intact.
 func (r *patchResource) revertPatch(
 	ctx context.Context,
 	model *patchResourceModel,
 ) error {
-	fieldManagerName, forceConflicts, diags := r.getFieldManagerConfig(ctx, model)
+	fieldManagerName, _, diags := r.getFieldManagerConfig(ctx, model)
 	if diags.HasError() {
 		return fmt.Errorf("failed to get field manager config: %v", diags)
 	}
 
-	// Build a minimal SSA payload with just identity fields.
-	// When applied with the same field manager, the API server will release
-	// ownership of all fields that this field manager previously owned
-	// but are not present in this new apply request.
-	payload := map[string]any{
-		"apiVersion": model.APIVersion.ValueString(),
-		"kind":       model.Kind.ValueString(),
-		"metadata": map[string]any{
-			"name": model.Name.ValueString(),
-		},
-	}
-	if !model.Namespace.IsNull() && model.Namespace.ValueString() != "" {
-		metadata, ok := payload["metadata"].(map[string]any)
-		if !ok {
-			return fmt.Errorf("metadata is not a map[string]any")
-		}
-		metadata["namespace"] = model.Namespace.ValueString()
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal revert payload: %w", err)
+	// Retrieve the stored patch so we know which fields to revert.
+	patchMap, d := dynamicToMap(ctx, model.Patch)
+	if d.HasError() {
+		return fmt.Errorf("failed to get patch content for revert: %v", d)
 	}
 
 	restClient, err := r.getRestClient(ctx, model)
 	if err != nil {
 		return err
+	}
+
+	// Fetch the live resource so we can compute the correct post-removal arrays.
+	current, err := restClient.ResourceInterface.Get(
+		ctx,
+		model.Name.ValueString(),
+		meta_v1.GetOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get current resource for revert: %w", err)
+	}
+
+	// Build the inverse payload: scalars → null, arrays → current minus our items.
+	payload := buildRevertPayload(current.Object, patchMap)
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+
+	// Ensure identity fields are always present and never nullified.
+	payload["apiVersion"] = model.APIVersion.ValueString()
+	payload["kind"] = model.Kind.ValueString()
+	meta, _ := payload["metadata"].(map[string]any)
+	if meta == nil {
+		meta = make(map[string]any)
+		payload["metadata"] = meta
+	}
+	meta["name"] = model.Name.ValueString()
+	if !model.Namespace.IsNull() && model.Namespace.ValueString() != "" {
+		meta["namespace"] = model.Namespace.ValueString()
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal revert payload: %w", err)
 	}
 
 	log.Printf("[DEBUG] Reverting patch on %s/%s/%s (field_manager=%s)",
@@ -600,11 +635,10 @@ func (r *patchResource) revertPatch(
 	_, err = restClient.ResourceInterface.Patch(
 		ctx,
 		model.Name.ValueString(),
-		k8stypes.ApplyPatchType,
+		k8stypes.MergePatchType,
 		jsonData,
 		meta_v1.PatchOptions{
 			FieldManager: fieldManagerName,
-			Force:        &forceConflicts,
 		},
 	)
 	if err != nil {
@@ -615,6 +649,94 @@ func (r *patchResource) revertPatch(
 		model.Kind.ValueString(), model.Name.ValueString())
 
 	return nil
+}
+
+// mergeArraysWithCurrent walks patch and, for any []any values, replaces them with
+// uniqueAppendSlice(current[key], patch[key]) so that existing items are preserved
+// and only new items are added. Map values are recursed; scalars pass through unchanged.
+func mergeArraysWithCurrent(current, patch map[string]any) map[string]any {
+	result := make(map[string]any, len(patch))
+	for k, patchVal := range patch {
+		switch pv := patchVal.(type) {
+		case map[string]any:
+			if cv, ok := current[k].(map[string]any); ok {
+				result[k] = mergeArraysWithCurrent(cv, pv)
+			} else {
+				result[k] = pv
+			}
+		case []any:
+			if cv, ok := current[k].([]any); ok {
+				result[k] = uniqueAppendSlice(cv, pv)
+			} else {
+				result[k] = pv
+			}
+		default:
+			result[k] = patchVal
+		}
+	}
+	return result
+}
+
+// buildRevertPayload builds the inverse of a patch against the current live object:
+//   - Scalar fields → nil (causes the key to be deleted via merge patch)
+//   - Array fields → current array with patch items removed
+//   - Map fields → recursed
+func buildRevertPayload(current, patch map[string]any) map[string]any {
+	result := make(map[string]any, len(patch))
+	for k, patchVal := range patch {
+		switch pv := patchVal.(type) {
+		case map[string]any:
+			if cv, ok := current[k].(map[string]any); ok {
+				result[k] = buildRevertPayload(cv, pv)
+			} else {
+				result[k] = nil
+			}
+		case []any:
+			if cv, ok := current[k].([]any); ok {
+				result[k] = removeFromSlice(cv, pv)
+			} else {
+				result[k] = nil
+			}
+		default:
+			result[k] = nil
+		}
+	}
+	return result
+}
+
+// uniqueAppendSlice returns existing with any items from patch appended that are
+// not already present (compared with reflect.DeepEqual).
+func uniqueAppendSlice(existing, patch []any) []any {
+	result := make([]any, 0, len(existing)+len(patch))
+	result = append(result, existing...)
+	for _, item := range patch {
+		if !sliceContains(result, item) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// removeFromSlice returns existing with any items also present in toRemove removed
+// (compared with reflect.DeepEqual).
+func removeFromSlice(existing, toRemove []any) []any {
+	result := make([]any, 0, len(existing))
+	for _, item := range existing {
+		if !sliceContains(toRemove, item) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// sliceContains reports whether target is present in s using reflect.DeepEqual.
+func sliceContains(s []any, target any) bool {
+	for _, item := range s {
+		if reflect.DeepEqual(item, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // setID sets the composite ID on the model.

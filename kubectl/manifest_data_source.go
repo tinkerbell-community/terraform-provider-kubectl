@@ -321,8 +321,27 @@ func (d *manifestDataSource) convertToObject(
 	objectType tftypes.Type,
 	typeHints map[string]string,
 ) *types.Dynamic {
+	// metadata.managedFields has heterogeneous element types across entries
+	// (each field manager's fieldsV1 object has different keys) which breaks
+	// OpenAPI-based list conversion. Strip it from a shallow copy before typed
+	// conversion; we'll re-add it afterwards as an untyped value.
+	convRaw := make(map[string]any, len(raw))
+	for k, v := range raw {
+		convRaw[k] = v
+	}
+	var savedManagedFields any
+	if meta, ok := convRaw["metadata"].(map[string]any); ok {
+		metaCopy := make(map[string]any, len(meta))
+		for k, v := range meta {
+			metaCopy[k] = v
+		}
+		savedManagedFields = metaCopy["managedFields"]
+		delete(metaCopy, "managedFields")
+		convRaw["metadata"] = metaCopy
+	}
+
 	// Convert the raw object to a tftypes.Value using OpenAPI type
-	tfValue, err := payload.ToTFValue(raw, objectType, typeHints, tftypes.NewAttributePath())
+	tfValue, err := payload.ToTFValue(convRaw, objectType, typeHints, tftypes.NewAttributePath())
 	if err != nil {
 		log.Printf(
 			"[WARN] Failed to convert API response with OpenAPI type: %v; falling back to untyped",
@@ -372,6 +391,15 @@ func (d *manifestDataSource) convertToObject(
 			return nil
 		}
 		return &result
+	}
+
+	// Re-add managedFields to the result so the attribute is still accessible.
+	// It is stored as a raw []any and will be encoded as a Tuple by mapToDynamic
+	// since each entry has a different fieldsV1 schema.
+	if savedManagedFields != nil {
+		if resultMeta, ok := resultContent["metadata"].(map[string]any); ok {
+			resultMeta["managedFields"] = savedManagedFields
+		}
 	}
 
 	result, diags := mapToDynamic(ctx, resultContent)

@@ -205,12 +205,17 @@ func (r *manifestResource) deleteManifestV2(
 
 	// Determine delete propagation policy
 	propagationPolicy := meta_v1.DeletePropagationBackground
-	if !model.DeleteCascade.IsNull() {
-		switch model.DeleteCascade.ValueString() {
-		case string(meta_v1.DeletePropagationForeground):
-			propagationPolicy = meta_v1.DeletePropagationForeground
-		case string(meta_v1.DeletePropagationBackground):
-			propagationPolicy = meta_v1.DeletePropagationBackground
+	if !model.Delete.IsNull() && !model.Delete.IsUnknown() {
+		var del deleteModel
+		if d := model.Delete.As(ctx, &del, basetypes.ObjectAsOptions{}); !d.HasError() {
+			if !del.Cascade.IsNull() {
+				switch del.Cascade.ValueString() {
+				case string(meta_v1.DeletePropagationForeground):
+					propagationPolicy = meta_v1.DeletePropagationForeground
+				case string(meta_v1.DeletePropagationBackground):
+					propagationPolicy = meta_v1.DeletePropagationBackground
+				}
+			}
 		}
 	}
 

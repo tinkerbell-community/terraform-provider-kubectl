@@ -18,8 +18,10 @@ resource "kubectl_manifest" "test" {
   }
 
   # Fields that may be modified by external controllers
-  computed_fields = [
-    "metadata.annotations",
-    "webhooks.0.clientConfig.caBundle",
-  ]
+  fields = {
+    computed = [
+      "metadata.annotations",
+      "webhooks.0.clientConfig.caBundle",
+    ]
+  }
 }

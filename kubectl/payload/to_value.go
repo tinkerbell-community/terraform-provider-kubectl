@@ -246,7 +246,13 @@ func sliceToTFListValue(
 		if oType == tftypes.Type(nil) {
 			oType = iv.Type()
 		}
-		if !oType.Is(iv.Type()) {
+		// Use reflect.DeepEqual for strict structural equality.
+		// tftypes.Is() only checks the type "kind" (e.g., both are tftypes.Object{})
+		// but two Object types with different attribute schemas both satisfy
+		// Is(tftypes.Object{}). Without this check, tftypes.NewValue panics when
+		// list elements have heterogeneous concrete shapes (e.g. metadata.managedFields
+		// where each entry's fieldsV1 has a different set of keys per field manager).
+		if !reflect.DeepEqual(oType, iv.Type()) {
 			return tftypes.Value{}, eap.NewErrorf(
 				"[%s] conflicting list element type: %s",
 				eap.String(),

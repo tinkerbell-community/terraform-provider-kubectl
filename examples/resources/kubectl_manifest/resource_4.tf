@@ -12,5 +12,7 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  computed_fields = ["metadata.annotations"]
+  fields = {
+    computed = ["metadata.annotations"]
+  }
 }
