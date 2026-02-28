@@ -139,36 +139,21 @@ func (p *kubectlProviderData) TFTypeFromOpenAPI(
 			)
 		}
 	}
-	// remove "status" attribute from resource type
+	// remove "status" attribute from resource type when not requested
 	if tsch.Is(tftypes.Object{}) && !status {
 		ot, ok := tsch.(tftypes.Object)
 		if !ok {
 			return nil, hints, fmt.Errorf("resource type is not a tftypes.Object: %T", tsch)
 		}
-		atts := make(map[string]tftypes.Type)
+		// Start with PartialObjectMetadata fields as a base so that apiVersion,
+		// kind, and metadata are always present (CRD schemas often only define spec).
+		// Resource-specific OpenAPI fields overlay the base and take precedence.
+		atts := partialObjectMetaTFTypes()
 		for k, t := range ot.AttributeTypes {
 			if k != "status" {
 				atts[k] = t
 			}
 		}
-		// types from CRDs only contain specific attributes
-		// we need to backfill metadata and apiVersion/kind attributes
-		if _, ok := atts["apiVersion"]; !ok {
-			atts["apiVersion"] = tftypes.String
-		}
-		if _, ok := atts["kind"]; !ok {
-			atts["kind"] = tftypes.String
-		}
-		metaType, _, err := oapi.GetTypeByGVK(api.ObjectMetaGVK)
-		if err != nil {
-			return nil, hints, fmt.Errorf("failed to generate tftypes for v1.ObjectMeta: %s", err)
-		}
-		mo, ok := metaType.(tftypes.Object)
-		if !ok {
-			return nil, hints, fmt.Errorf("ObjectMeta type is not a tftypes.Object: %T", metaType)
-		}
-		atts["metadata"] = mo
-
 		tsch = tftypes.Object{AttributeTypes: atts}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -184,9 +185,15 @@ func (d *manifestDataSource) Read(
 		th = map[string]string{}
 	}
 
-	// Fetch the resource from the API server
-	var res *metav1.PartialObjectMetadata
-	_ = res // suppress unused warning
+	// Merge top-level PartialObjectMetadata fields into objectType so that
+	// apiVersion, kind, and metadata are always present regardless of how
+	// complete the resource-specific OpenAPI schema is (e.g. CRDs that only
+	// define spec). The resource-specific OpenAPI types take precedence.
+	if obj, ok := objectType.(tftypes.Object); ok {
+		atts := partialObjectMetaTFTypes()
+		maps.Copy(atts, obj.AttributeTypes)
+		objectType = tftypes.Object{AttributeTypes: atts}
+	}
 
 	if ns {
 		if namespace == "" {
@@ -251,6 +258,59 @@ func (d *manifestDataSource) Read(
 	// Set state
 	diags = resp.State.Set(ctx, &model)
 	resp.Diagnostics.Append(diags...)
+}
+
+// objectMetaTFTypes returns the tftypes.Type representation of metav1.ObjectMeta.
+// Fields mirror the JSON serialization of the ObjectMeta struct.
+func objectMetaTFTypes() tftypes.Object {
+	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"name":                       tftypes.String,
+		"generateName":               tftypes.String,
+		"namespace":                  tftypes.String,
+		"selfLink":                   tftypes.String,
+		"uid":                        tftypes.String,
+		"resourceVersion":            tftypes.String,
+		"generation":                 tftypes.Number,
+		"creationTimestamp":          tftypes.String,
+		"deletionTimestamp":          tftypes.String,
+		"deletionGracePeriodSeconds": tftypes.Number,
+		"labels":                     tftypes.Map{ElementType: tftypes.String},
+		"annotations":                tftypes.Map{ElementType: tftypes.String},
+		"ownerReferences": tftypes.List{ElementType: tftypes.Object{
+			AttributeTypes: map[string]tftypes.Type{
+				"apiVersion":         tftypes.String,
+				"blockOwnerDeletion": tftypes.Bool,
+				"controller":         tftypes.Bool,
+				"kind":               tftypes.String,
+				"name":               tftypes.String,
+				"uid":                tftypes.String,
+			},
+		}},
+		"finalizers":  tftypes.List{ElementType: tftypes.String},
+		"clusterName": tftypes.String,
+		"managedFields": tftypes.List{ElementType: tftypes.Object{
+			AttributeTypes: map[string]tftypes.Type{
+				"manager":    tftypes.String,
+				"operation":  tftypes.String,
+				"apiVersion": tftypes.String,
+				"time":       tftypes.String,
+				"fieldsType": tftypes.String,
+				"fieldsV1":   tftypes.DynamicPseudoType,
+			},
+		}},
+	}}
+}
+
+// partialObjectMetaTFTypes returns the tftypes.Type map for the top-level
+// fields of metav1.PartialObjectMetadata (TypeMeta inline + ObjectMeta).
+// This is used as a base when merging with a resource-specific OpenAPI type
+// to ensure apiVersion, kind, and metadata are always present.
+func partialObjectMetaTFTypes() map[string]tftypes.Type {
+	return map[string]tftypes.Type{
+		"apiVersion": tftypes.String,
+		"kind":       tftypes.String,
+		"metadata":   objectMetaTFTypes(),
+	}
 }
 
 // convertToObject converts a raw Kubernetes object map to a types.Dynamic value
