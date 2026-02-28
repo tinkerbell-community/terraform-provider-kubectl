@@ -1271,23 +1271,47 @@ func testAccManifestWaitCondition(name string) string {
 	return fmt.Sprintf(`
 resource "kubectl_manifest" "test" {
   manifest = {
-    apiVersion = "v1"
-    kind       = "Namespace"
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
     metadata = {
-      name = %q
+      name      = %q
+      namespace = "default"
+    }
+    spec = {
+      replicas = 1
+      selector = {
+        matchLabels = {
+          app = %q
+        }
+      }
+      template = {
+        metadata = {
+          labels = {
+            app = %q
+          }
+        }
+        spec = {
+          containers = [
+            {
+              name  = "nginx"
+              image = "nginx:alpine"
+            }
+          ]
+        }
+      }
     }
   }
 
   wait = {
     conditions = [
       {
-        type   = "NamespacesFinalizersRemaining"
-        status = "False"
+        type   = "Available"
+        status = "True"
       }
     ]
   }
 }
-`, name)
+`, name, name, name)
 }
 
 func testAccManifestWaitRolloutUpdate(name, image string) string {
@@ -1371,7 +1395,7 @@ resource "kubectl_manifest" "test" {
       ports = [
         {
           port       = %d
-          targetPort = 80
+          targetPort = "http"
           protocol   = "TCP"
         }
       ]
