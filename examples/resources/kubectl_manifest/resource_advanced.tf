@@ -37,13 +37,15 @@ resource "kubectl_manifest" "statefulset_with_wait" {
     }
   }
 
-  wait {
+  wait = {
     rollout = true
 
-    field {
-      key   = "status.readyReplicas"
-      value = "3"
-    }
+    field = [
+      {
+        key   = "status.readyReplicas"
+        value = "3"
+      },
+    ]
   }
 }
 
@@ -62,7 +64,7 @@ resource "kubectl_manifest" "with_field_manager" {
     }
   }
 
-  field_manager {
+  field_manager = {
     name            = "Terraform"
     force_conflicts = true
   }
@@ -93,19 +95,23 @@ resource "kubectl_manifest" "job_with_error_detection" {
   }
 
   # Wait for job completion
-  wait {
-    condition {
-      type   = "Complete"
-      status = "True"
-    }
+  wait = {
+    condition = [
+      {
+        type   = "Complete"
+        status = "True"
+      },
+    ]
   }
 
   # Fail immediately if the job reports a failure condition
-  error_on {
-    condition {
-      type   = "Failed"
-      status = "True"
-    }
+  error_on = {
+    condition = [
+      {
+        type   = "Failed"
+        status = "True"
+      },
+    ]
   }
 }
 
@@ -140,7 +146,7 @@ resource "kubectl_manifest" "daemonset" {
     }
   }
 
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -262,12 +268,12 @@ resource "kubectl_manifest" "app_deployment" {
     }
   }
 
-  field_manager {
+  field_manager = {
     name            = "Terraform"
     force_conflicts = true
   }
 
-  wait {
+  wait = {
     rollout = true
   }
 }

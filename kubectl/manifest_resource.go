@@ -317,21 +317,19 @@ func (r *manifestResource) Schema(
 				Update: true,
 				Delete: true,
 			}),
-		},
-		Blocks: map[string]schema.Block{
-			"wait": schema.SingleNestedBlock{
+			"wait": schema.SingleNestedAttribute{
+				Optional:            true,
 				MarkdownDescription: "Configure waiter options. The apply will block until success conditions are met or the timeout is reached.",
 				Attributes: map[string]schema.Attribute{
 					"rollout": schema.BoolAttribute{
 						Optional:            true,
 						MarkdownDescription: "Wait for rollout to complete on resources that support `kubectl rollout status`.",
 					},
-				},
-				Blocks: map[string]schema.Block{
-					"field": schema.ListNestedBlock{
+					"field": schema.ListNestedAttribute{
+						Optional: true,
 						MarkdownDescription: "Wait for a resource field to reach an expected value. " +
-							"Multiple `field` blocks can be specified; all must match.",
-						NestedObject: schema.NestedBlockObject{
+							"Multiple entries can be specified; all must match.",
+						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"key": schema.StringAttribute{
 									Required:            true,
@@ -353,9 +351,10 @@ func (r *manifestResource) Schema(
 							},
 						},
 					},
-					"condition": schema.ListNestedBlock{
+					"condition": schema.ListNestedAttribute{
+						Optional:            true,
 						MarkdownDescription: "Wait for status conditions to match.",
-						NestedObject: schema.NestedBlockObject{
+						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"type": schema.StringAttribute{
 									Optional:            true,
@@ -370,15 +369,17 @@ func (r *manifestResource) Schema(
 					},
 				},
 			},
-			"error_on": schema.SingleNestedBlock{
+			"error_on": schema.SingleNestedAttribute{
+				Optional: true,
 				MarkdownDescription: "Define error conditions that are checked continuously while waiting for success conditions. " +
 					"If any error condition matches, the apply fails immediately. " +
 					"Use this to detect error states such as CrashLoopBackOff or Failed status.",
-				Blocks: map[string]schema.Block{
-					"field": schema.ListNestedBlock{
+				Attributes: map[string]schema.Attribute{
+					"field": schema.ListNestedAttribute{
+						Optional: true,
 						MarkdownDescription: "Fail if a resource field matches an error pattern. " +
-							"Multiple `field` blocks can be specified; any match triggers failure.",
-						NestedObject: schema.NestedBlockObject{
+							"Multiple entries can be specified; any match triggers failure.",
+						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"key": schema.StringAttribute{
 									Required:            true,
@@ -400,9 +401,10 @@ func (r *manifestResource) Schema(
 							},
 						},
 					},
-					"condition": schema.ListNestedBlock{
+					"condition": schema.ListNestedAttribute{
+						Optional:            true,
 						MarkdownDescription: "Fail if a status condition matches. Any match triggers failure.",
-						NestedObject: schema.NestedBlockObject{
+						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"type": schema.StringAttribute{
 									Optional:            true,
@@ -417,7 +419,8 @@ func (r *manifestResource) Schema(
 					},
 				},
 			},
-			"field_manager": schema.SingleNestedBlock{
+			"field_manager": schema.SingleNestedAttribute{
+				Optional:            true,
 				MarkdownDescription: "Configure field manager options for server-side apply.",
 				Attributes: map[string]schema.Attribute{
 					"name": schema.StringAttribute{

@@ -20,35 +20,41 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
-    field {
-      key   = "status.containerStatuses.[0].ready"
-      value = "true"
-    }
-    field {
-      key   = "status.phase"
-      value = "Running"
-    }
-    field {
-      key        = "status.podIP"
-      value      = "^(\\d+(\\.|$)){4}"
-      value_type = "regex"
-    }
-    condition {
-      type   = "ContainersReady"
-      status = "True"
-    }
-    condition {
-      type   = "Ready"
-      status = "True"
-    }
+  wait = {
+    field = [
+      {
+        key   = "status.containerStatuses.[0].ready"
+        value = "true"
+      },
+      {
+        key   = "status.phase"
+        value = "Running"
+      },
+      {
+        key        = "status.podIP"
+        value      = "^(\\d+(\\.|$)){4}"
+        value_type = "regex"
+      },
+    ]
+    condition = [
+      {
+        type   = "ContainersReady"
+        status = "True"
+      },
+      {
+        type   = "Ready"
+        status = "True"
+      },
+    ]
   }
 
   # Fail immediately if the pod enters a crash loop
-  error_on {
-    field {
-      key   = "status.containerStatuses.[0].state.waiting.reason"
-      value = "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"
-    }
+  error_on = {
+    field = [
+      {
+        key   = "status.containerStatuses.[0].state.waiting.reason"
+        value = "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"
+      },
+    ]
   }
 }

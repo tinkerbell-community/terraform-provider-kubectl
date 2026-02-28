@@ -79,13 +79,13 @@ resource "kubectl_manifest" "deployment" {
   }
 
   # Use server-side apply with field manager for better conflict resolution
-  field_manager {
+  field_manager = {
     name            = "Terraform"
     force_conflicts = true
   }
 
   # Wait for the deployment to be ready
-  wait {
+  wait = {
     rollout = true
   }
 }

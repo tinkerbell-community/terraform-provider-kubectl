@@ -93,13 +93,13 @@ resource "kubectl_manifest" "deployment" {
   }
 
   # Use server-side apply with field manager for better conflict resolution
-  field_manager {
+  field_manager = {
     name            = "Terraform"
     force_conflicts = true
   }
 
   # Wait for the deployment to be ready
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -334,36 +334,42 @@ resource "kubectl_manifest" "test" {
     }
   }
 
-  wait {
-    field {
-      key   = "status.containerStatuses.[0].ready"
-      value = "true"
-    }
-    field {
-      key   = "status.phase"
-      value = "Running"
-    }
-    field {
-      key        = "status.podIP"
-      value      = "^(\\d+(\\.|$)){4}"
-      value_type = "regex"
-    }
-    condition {
-      type   = "ContainersReady"
-      status = "True"
-    }
-    condition {
-      type   = "Ready"
-      status = "True"
-    }
+  wait = {
+    field = [
+      {
+        key   = "status.containerStatuses.[0].ready"
+        value = "true"
+      },
+      {
+        key   = "status.phase"
+        value = "Running"
+      },
+      {
+        key        = "status.podIP"
+        value      = "^(\\d+(\\.|$)){4}"
+        value_type = "regex"
+      },
+    ]
+    condition = [
+      {
+        type   = "ContainersReady"
+        status = "True"
+      },
+      {
+        type   = "Ready"
+        status = "True"
+      },
+    ]
   }
 
   # Fail immediately if the pod enters a crash loop
-  error_on {
-    field {
-      key   = "status.containerStatuses.[0].state.waiting.reason"
-      value = "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"
-    }
+  error_on = {
+    field = [
+      {
+        key   = "status.containerStatuses.[0].state.waiting.reason"
+        value = "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"
+      },
+    ]
   }
 }
 ```
@@ -476,13 +482,15 @@ resource "kubectl_manifest" "statefulset_with_wait" {
     }
   }
 
-  wait {
+  wait = {
     rollout = true
 
-    field {
-      key   = "status.readyReplicas"
-      value = "3"
-    }
+    field = [
+      {
+        key   = "status.readyReplicas"
+        value = "3"
+      },
+    ]
   }
 }
 
@@ -501,7 +509,7 @@ resource "kubectl_manifest" "with_field_manager" {
     }
   }
 
-  field_manager {
+  field_manager = {
     name            = "Terraform"
     force_conflicts = true
   }
@@ -532,19 +540,23 @@ resource "kubectl_manifest" "job_with_error_detection" {
   }
 
   # Wait for job completion
-  wait {
-    condition {
-      type   = "Complete"
-      status = "True"
-    }
+  wait = {
+    condition = [
+      {
+        type   = "Complete"
+        status = "True"
+      },
+    ]
   }
 
   # Fail immediately if the job reports a failure condition
-  error_on {
-    condition {
-      type   = "Failed"
-      status = "True"
-    }
+  error_on = {
+    condition = [
+      {
+        type   = "Failed"
+        status = "True"
+      },
+    ]
   }
 }
 
@@ -579,7 +591,7 @@ resource "kubectl_manifest" "daemonset" {
     }
   }
 
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -701,12 +713,12 @@ resource "kubectl_manifest" "app_deployment" {
     }
   }
 
-  field_manager {
+  field_manager = {
     name            = "Terraform"
     force_conflicts = true
   }
 
-  wait {
+  wait = {
     rollout = true
   }
 }
@@ -748,11 +760,11 @@ resource "kubectl_manifest" "app_service" {
 - `apply_only` (Boolean) Apply only (never delete the resource). Default: false
 - `computed_fields` (List of String) List of manifest fields whose values may be altered by the API server during apply. Defaults to: `["metadata.annotations", "metadata.labels"]`
 - `delete_cascade` (String) Cascade mode for deletion: Background or Foreground. Default: Background
-- `error_on` (Block, Optional) Define error conditions that are checked continuously while waiting for success conditions. If any error condition matches, the apply fails immediately. Use this to detect error states such as CrashLoopBackOff or Failed status. (see [below for nested schema](#nestedblock--error_on))
-- `field_manager` (Block, Optional) Configure field manager options for server-side apply. (see [below for nested schema](#nestedblock--field_manager))
+- `error_on` (Attributes) Define error conditions that are checked continuously while waiting for success conditions. If any error condition matches, the apply fails immediately. Use this to detect error states such as CrashLoopBackOff or Failed status. (see [below for nested schema](#nestedatt--error_on))
+- `field_manager` (Attributes) Configure field manager options for server-side apply. (see [below for nested schema](#nestedatt--field_manager))
 - `immutable_fields` (List of String) List of manifest field paths that are immutable after creation. If any of these fields change, the resource will be replaced (destroyed and re-created). Uses dot-separated paths (e.g., `spec.selector`).
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
-- `wait` (Block, Optional) Configure waiter options. The apply will block until success conditions are met or the timeout is reached. (see [below for nested schema](#nestedblock--wait))
+- `wait` (Attributes) Configure waiter options. The apply will block until success conditions are met or the timeout is reached. (see [below for nested schema](#nestedatt--wait))
 
 ### Read-Only
 
@@ -760,15 +772,15 @@ resource "kubectl_manifest" "app_service" {
 - `object` (Dynamic) The full resource object as returned by the API server.
 - `status` (Dynamic) Resource status as reported by the Kubernetes API server.
 
-<a id="nestedblock--error_on"></a>
+<a id="nestedatt--error_on"></a>
 ### Nested Schema for `error_on`
 
 Optional:
 
-- `condition` (Block List) Fail if a status condition matches. Any match triggers failure. (see [below for nested schema](#nestedblock--error_on--condition))
-- `field` (Block List) Fail if a resource field matches an error pattern. Multiple `field` blocks can be specified; any match triggers failure. (see [below for nested schema](#nestedblock--error_on--field))
+- `condition` (Attributes List) Fail if a status condition matches. Any match triggers failure. (see [below for nested schema](#nestedatt--error_on--condition))
+- `field` (Attributes List) Fail if a resource field matches an error pattern. Multiple entries can be specified; any match triggers failure. (see [below for nested schema](#nestedatt--error_on--field))
 
-<a id="nestedblock--error_on--condition"></a>
+<a id="nestedatt--error_on--condition"></a>
 ### Nested Schema for `error_on.condition`
 
 Optional:
@@ -777,7 +789,7 @@ Optional:
 - `type` (String) The type of condition to check.
 
 
-<a id="nestedblock--error_on--field"></a>
+<a id="nestedatt--error_on--field"></a>
 ### Nested Schema for `error_on.field`
 
 Required:
@@ -791,7 +803,7 @@ Optional:
 
 
 
-<a id="nestedblock--field_manager"></a>
+<a id="nestedatt--field_manager"></a>
 ### Nested Schema for `field_manager`
 
 Optional:
@@ -810,16 +822,16 @@ Optional:
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 
-<a id="nestedblock--wait"></a>
+<a id="nestedatt--wait"></a>
 ### Nested Schema for `wait`
 
 Optional:
 
-- `condition` (Block List) Wait for status conditions to match. (see [below for nested schema](#nestedblock--wait--condition))
-- `field` (Block List) Wait for a resource field to reach an expected value. Multiple `field` blocks can be specified; all must match. (see [below for nested schema](#nestedblock--wait--field))
+- `condition` (Attributes List) Wait for status conditions to match. (see [below for nested schema](#nestedatt--wait--condition))
+- `field` (Attributes List) Wait for a resource field to reach an expected value. Multiple entries can be specified; all must match. (see [below for nested schema](#nestedatt--wait--field))
 - `rollout` (Boolean) Wait for rollout to complete on resources that support `kubectl rollout status`.
 
-<a id="nestedblock--wait--condition"></a>
+<a id="nestedatt--wait--condition"></a>
 ### Nested Schema for `wait.condition`
 
 Optional:
@@ -828,7 +840,7 @@ Optional:
 - `type` (String) The type of condition.
 
 
-<a id="nestedblock--wait--field"></a>
+<a id="nestedatt--wait--field"></a>
 ### Nested Schema for `wait.field`
 
 Required:
