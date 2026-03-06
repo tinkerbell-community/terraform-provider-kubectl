@@ -1123,6 +1123,8 @@ func (r *manifestResource) ImportState(
 		Status:       types.DynamicNull(),
 		Object:       types.DynamicNull(),
 		Fields:       types.ObjectNull(fieldsAttrTypes()),
+		Set:          types.ListNull(types.ObjectType{AttrTypes: setEntryAttrTypes()}),
+		SetWo:        types.ListNull(types.ObjectType{AttrTypes: setEntryAttrTypes()}),
 		Delete:       types.ObjectNull(deleteAttrTypes()),
 		Wait:         types.ObjectNull(waitBlockAttrTypes()),
 		Error:        types.ObjectNull(errorAttrTypes()),
