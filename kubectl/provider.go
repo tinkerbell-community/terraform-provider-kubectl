@@ -31,8 +31,9 @@ import (
 
 // Ensure the implementation satisfies the provider interfaces.
 var (
-	_ provider.Provider            = &kubectlProvider{}
-	_ provider.ProviderWithActions = &kubectlProvider{}
+	_ provider.Provider              = &kubectlProvider{}
+	_ provider.ProviderWithActions   = &kubectlProvider{}
+	_ provider.ProviderWithFunctions = &kubectlProvider{}
 )
 
 // kubectlProvider defines the provider implementation.

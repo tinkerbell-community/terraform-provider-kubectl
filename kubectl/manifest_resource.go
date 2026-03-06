@@ -2272,7 +2272,13 @@ func (r *manifestResource) readManifestWithOpenAPI(
 		return err
 	}
 
-	// Remove server-side fields
+	// Deep copy the result so that RemoveServerSideFields (which mutates in-place)
+	// does not strip computed metadata from the original object. The original is
+	// passed to setStateFromOpenAPIResult to populate model.Object with the full
+	// server response including uid, creationTimestamp, generation, resourceVersion, etc.
+	fullResult := result.DeepCopy()
+
+	// Remove server-side fields from the copy for manifest processing
 	content := RemoveServerSideFields(result.UnstructuredContent())
 
 	// Convert using OpenAPI type
@@ -2300,8 +2306,8 @@ func (r *manifestResource) readManifestWithOpenAPI(
 		return r.readManifestV2(ctx, model)
 	}
 
-	// Use setStateFromUnstructured but with the cleaned content
-	return r.setStateFromOpenAPIResult(ctx, resultContent, result, model)
+	// Pass fullResult (unmutated) so object retains computed metadata fields
+	return r.setStateFromOpenAPIResult(ctx, resultContent, fullResult, model)
 }
 
 // setStateFromOpenAPIResult populates the model from an OpenAPI-typed result map.
