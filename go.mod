@@ -1,4 +1,4 @@
-module github.com/tinkerbell-community/terraform-provider-kubectl
+module github.com/hashicorp-oss/terraform-provider-kubectl
 
 go 1.25.0
 
@@ -198,6 +198,6 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
 
-replace github.com/tinkerbell-community/terraform-provider-kubectl => ./
+replace github.com/hashicorp-oss/terraform-provider-kubectl => ./
 
 tool github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs

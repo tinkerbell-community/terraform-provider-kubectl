@@ -480,8 +480,8 @@ import (
 
 **Remove unused imports:**
 
-- `github.com/tinkerbell-community/terraform-provider-kubectl/yaml` (from manifest_resource.go, keep in manifest_crud.go)
-- `github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/util` (from manifest_resource.go, keep in manifest_crud.go)
+- `github.com/hashicorp-oss/terraform-provider-kubectl/yaml` (from manifest_resource.go, keep in manifest_crud.go)
+- `github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/util` (from manifest_resource.go, keep in manifest_crud.go)
 - `github.com/thedevsaddam/gojsonq/v2`
 - `crypto/sha256`
 - `encoding/base64`

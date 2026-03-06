@@ -34,7 +34,7 @@ Implemented all remaining optional features:
 - `crypto/sha256`
 - `encoding/base64`
 - `sort`
-- `github.com/tinkerbell-community/terraform-provider-kubectl/flatten`
+- `github.com/hashicorp-oss/terraform-provider-kubectl/flatten`
 
 ### Phase 2: Mux Removal & Framework Cutover ✅
 
@@ -193,7 +193,7 @@ This migration followed the **metal3-community/terraform-provider-ironic** as th
 
 ```bash
 $ make test
-ok      github.com/tinkerbell-community/terraform-provider-kubectl/kubectl     0.894s
+ok      github.com/hashicorp-oss/terraform-provider-kubectl/kubectl     0.894s
 ```
 
 - 20 test functions defined

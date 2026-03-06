@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/api"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"

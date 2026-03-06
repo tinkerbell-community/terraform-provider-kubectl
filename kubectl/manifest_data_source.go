@@ -6,12 +6,12 @@ import (
 	"log"
 	"maps"
 
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/morph"
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/payload"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/morph"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/payload"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
 )

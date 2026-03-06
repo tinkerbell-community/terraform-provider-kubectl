@@ -5,8 +5,8 @@ import (
 	"flag"
 	"log"
 
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
 )
 
 // version is set via -ldflags during build.
@@ -26,7 +26,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/tinkerbell-community/kubectl",
+		Address: "registry.terraform.io/hashicorp-oss/kubectl",
 		Debug:   debug,
 	}
 

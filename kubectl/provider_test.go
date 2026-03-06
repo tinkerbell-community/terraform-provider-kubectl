@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/testcontainers/testcontainers-go/modules/k3s"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"

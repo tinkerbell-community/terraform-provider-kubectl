@@ -19,7 +19,7 @@ When developing the kubectl provider locally, you'll want to use a locally built
    ```hcl
    provider_installation {
      dev_overrides {
-       "tinkerbell-community/kubectl" = "/Users/atkini01/src/appkins/terraform-provider-kubectl"
+       "hashicorp-oss/kubectl" = "/Users/atkini01/src/appkins/terraform-provider-kubectl"
      }
 
      # For all other providers, use the registry
@@ -61,8 +61,8 @@ If you need to test with a specific version (matching your state):
 go build -ldflags "-X main.version=v2.0.3" -o terraform-provider-kubectl
 
 # Install to Terraform's plugin directory
-mkdir -p ~/.terraform.d/plugins/registry.terraform.io/tinkerbell-community/kubectl/2.0.3/darwin_arm64
-cp terraform-provider-kubectl ~/.terraform.d/plugins/registry.terraform.io/tinkerbell-community/kubectl/2.0.3/darwin_arm64/
+mkdir -p ~/.terraform.d/plugins/registry.terraform.io/hashicorp-oss/kubectl/2.0.3/darwin_arm64
+cp terraform-provider-kubectl ~/.terraform.d/plugins/registry.terraform.io/hashicorp-oss/kubectl/2.0.3/darwin_arm64/
 
 # Run terraform init to use the new version
 cd your-terraform-project
@@ -123,7 +123,7 @@ go test -v ./kubectl -run TestAccManifestResource_basic
    terraform {
      required_providers {
        kubectl = {
-         source = "tinkerbell-community/kubectl"
+         source = "hashicorp-oss/kubectl"
        }
      }
    }

@@ -3,7 +3,7 @@ terraform {
 
   required_providers {
     kubectl = {
-      source  = "tinkerbell-community/kubectl"
+      source  = "hashicorp-oss/kubectl"
       version = ">= 2.0.0"
     }
   }

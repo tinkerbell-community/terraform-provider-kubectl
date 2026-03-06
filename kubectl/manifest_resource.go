@@ -13,6 +13,10 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/api"
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/morph"
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/payload"
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/util"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -32,10 +36,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/thedevsaddam/gojsonq/v2"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/api"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/morph"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/payload"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/util"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -336,6 +336,20 @@ func (r *manifestResource) Schema(
 						MarkdownDescription: "List of manifest field paths that are immutable after creation. " +
 							"If any of these fields change, the resource will be replaced (destroyed and re-created). " +
 							"Uses dot-separated paths (e.g., `spec.selector`).",
+					},
+					"set": schema.ListAttribute{
+						ElementType: types.StringType,
+						Optional:    true,
+						MarkdownDescription: "List of manifest field paths that should be set to the planned value on every apply, even if the value hasn't changed. " +
+							"Useful for fields that are defaulted or mutated by the API server and need to be kept in sync with the plan. " +
+							"Uses dot-separated paths (e.g., `spec.replicas`).",
+					},
+					"set_wo": schema.ListAttribute{
+						ElementType: types.StringType,
+						Optional:    true,
+						WriteOnly:   true,
+						MarkdownDescription: "List of manifest field paths that should be set without waiting for the API server to acknowledge. " +
+							"Uses dot-separated paths (e.g., `spec.replicas`).",
 					},
 				},
 			},
@@ -1576,7 +1590,7 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 // identified by apiVersion, kind, and optional namespace. Reusable in Read,
 // applyManifest, and anywhere else a dynamic client handle is needed.
 func (r *manifestResource) getResourceInterface(
-	ctx context.Context,
+	_ context.Context,
 	apiVersion, kind, namespace string,
 ) (dynamic.ResourceInterface, error) {
 	gvk := k8sschema.FromAPIVersionAndKind(apiVersion, kind)
@@ -1605,7 +1619,6 @@ func (r *manifestResource) getResourceInterface(
 func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
-	fieldsWo types.Dynamic,
 ) error {
 	// Save user-provided manifest before readManifest overwrites it.
 	// The API response includes server-generated fields (uid, creationTimestamp, etc.)
@@ -1614,10 +1627,10 @@ func (r *manifestResource) applyManifest(
 	plannedManifest := model.Manifest
 
 	// Inject write-only fields into the manifest before applying.
-	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
+	if !model.FieldsWo.IsNull() && !model.FieldsWo.IsUnknown() {
 		manifestMap, d := dynamicToMap(ctx, model.Manifest)
 		if !d.HasError() && manifestMap != nil {
-			if err := applyFieldsWoToMap(ctx, manifestMap, fieldsWo); err != nil {
+			if err := applyFieldsWoToMap(ctx, manifestMap, model.FieldsWo); err != nil {
 				return fmt.Errorf("failed to inject fields_wo into manifest: %w", err)
 			}
 			mergedDynamic, d := mapToDynamic(ctx, manifestMap)
@@ -1638,8 +1651,8 @@ func (r *manifestResource) applyManifest(
 	}
 
 	// Mask write-only paths in object so sensitive values don't persist in state.
-	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
-		keys, _ := extractFieldsWoKeys(ctx, fieldsWo)
+	if !model.FieldsWo.IsNull() && !model.FieldsWo.IsUnknown() {
+		keys, _ := extractFieldsWoKeys(ctx, model.FieldsWo)
 		if len(keys) > 0 {
 			if err := maskFieldsWoPaths(ctx, model, keys); err != nil {
 				log.Printf("[WARN] Failed to mask fields_wo paths in object: %v", err)

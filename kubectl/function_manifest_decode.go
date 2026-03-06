@@ -6,9 +6,9 @@ package kubectl
 import (
 	"context"
 
+	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/yaml"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/tinkerbell-community/terraform-provider-kubectl/kubectl/yaml"
 )
 
 var _ function.Function = ManifestDecodeFunction{}

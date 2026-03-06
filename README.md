@@ -1,6 +1,6 @@
 # Kubernetes "kubectl" Provider
 
-![Build Status](https://github.com/tinkerbell-community/terraform-provider-kubectl/actions/workflows/tests.yaml/badge.svg) [![user guide](https://img.shields.io/badge/-user%20guide-blue)](https://registry.terraform.io/providers/tinkerbell-community/kubectl)
+![Build Status](https://github.com/hashicorp-oss/terraform-provider-kubectl/actions/workflows/tests.yaml/badge.svg) [![user guide](https://img.shields.io/badge/-user%20guide-blue)](https://registry.terraform.io/providers/hashicorp-oss/kubectl)
 
 This provider offers the most effective method for handling Kubernetes resources in Terraform. It empowers you to leverage what Kubernetes values most - YAML!
 
@@ -25,7 +25,7 @@ terraform {
 
   required_providers {
     kubectl = {
-      source  = "tinkerbell-community/kubectl"
+      source  = "hashicorp-oss/kubectl"
       version = "~> 2.0"
     }
   }
@@ -34,7 +34,7 @@ terraform {
 
 ### Install manually
 
-If you don't want to use the one-liner above, you can download a binary for your system from the [release page](https://github.com/tinkerbell-community/terraform-provider-kubectl/releases),
+If you don't want to use the one-liner above, you can download a binary for your system from the [release page](https://github.com/hashicorp-oss/terraform-provider-kubectl/releases),
 then either place it at the root of your Terraform folder or in the Terraform plugin folder on your system.
 
 ## Quick Start
@@ -76,16 +76,16 @@ YAML
 }
 ```
 
-See [User Guide](https://registry.terraform.io/providers/tinkerbell-community/kubectl/latest) for details on installation and all the provided data and resource types.
+See [User Guide](https://registry.terraform.io/providers/hashicorp-oss/kubectl/latest) for details on installation and all the provided data and resource types.
 
 ## Changing providers for existing resources
 
 When you used another fork of this provider in the past, it is possible to change the provider on all existing resources within your state. A common use-case of this is to switch from `gavinbunney/kubectl` towards this fork.
 
-Change the `required_providers` sections in your main code and in all used modules to reflect the usage of `tinkerbell-community/kubectl` as shown above. Once this is done, use the `state replace-provider` to make the switch on all existing resources in your state.
+Change the `required_providers` sections in your main code and in all used modules to reflect the usage of `hashicorp-oss/kubectl` as shown above. Once this is done, use the `state replace-provider` to make the switch on all existing resources in your state.
 
 ```
-terraform state replace-provider gavinbunney/kubectl tinkerbell-community/kubectl
+terraform state replace-provider gavinbunney/kubectl hashicorp-oss/kubectl
 ```
 
 You should then `terraform init`, and the next terraform actions will use this provider.
@@ -104,7 +104,7 @@ To compile the provider, run `make build`. This will build the provider and put 
 You can build the master branch of the provider by running
 
 ```sh
-git clone github.com/tinkerbell-community/terraform-provider-kubectl
+git clone github.com/hashicorp-oss/terraform-provider-kubectl
 cd terraform-provider-kubectl
 make build
 ```
@@ -115,7 +115,7 @@ Now we need to tell Terraform to override remote versions with our local build. 
 ```hcl
  provider_installation {
   dev_overrides {
-    "tinkerbell-community/kubectl" = "/Users/alekc/go/bin/"
+    "hashicorp-oss/kubectl" = "/Users/alekc/go/bin/"
   }
   direct {}
 }
@@ -131,7 +131,7 @@ If all went well, you should see a following message during the apply:
 │ Warning: Provider development overrides are in effect
 │ 
 │ The following provider development overrides are set in the CLI configuration:
-│  - tinkerbell-community/kubectl in /Users/alekc/go/bin
+│  - hashicorp-oss/kubectl in /Users/alekc/go/bin
 
 ```
 
