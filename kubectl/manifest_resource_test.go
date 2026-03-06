@@ -795,6 +795,119 @@ func TestAccResourceKubectlManifest_Deployment_CRUD(t *testing.T) {
 	})
 }
 
+// --- object computed metadata Tests ---
+
+func TestAccResourceKubectlManifest_objectMetadataComputed(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-obj-meta")
+	resourceName := "kubectl_manifest.test"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		CheckDestroy: testAccCheckManifestDestroy(
+			k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"},
+			"default", name,
+		),
+		Steps: []resource.TestStep{
+			{
+				Config: configMapConfig(name, "default", "key1", "value1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					resource.TestCheckResourceAttrSet(resourceName, "object.metadata.uid"),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.creationTimestamp",
+					),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.resourceVersion",
+					),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceKubectlManifest_objectMetadataComputedAfterUpdate(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-obj-meta-upd")
+	resourceName := "kubectl_manifest.test"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		CheckDestroy: testAccCheckManifestDestroy(
+			k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"},
+			"default", name,
+		),
+		Steps: []resource.TestStep{
+			{
+				Config: configMapConfig(name, "default", "key1", "value1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "object.metadata.uid"),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.creationTimestamp",
+					),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.resourceVersion",
+					),
+				),
+			},
+			{
+				Config: configMapConfig(name, "default", "key1", "value2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "object.metadata.uid"),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.creationTimestamp",
+					),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.resourceVersion",
+					),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceKubectlManifest_objectMetadataComputedClusterScoped(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-obj-meta-ns")
+	resourceName := "kubectl_manifest.test_ns"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		CheckDestroy: testAccCheckManifestDestroy(
+			k8sschema.GroupVersionResource{Version: "v1", Resource: "namespaces"},
+			"", name,
+		),
+		Steps: []resource.TestStep{
+			{
+				Config: namespaceConfig(name),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "object.metadata.uid"),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.creationTimestamp",
+					),
+					resource.TestCheckResourceAttrSet(
+						resourceName,
+						"object.metadata.resourceVersion",
+					),
+				),
+			},
+		},
+	})
+}
+
 // --- computed_fields Tests ---
 
 func TestAccResourceKubectlManifest_computedFieldsDefault(t *testing.T) {
