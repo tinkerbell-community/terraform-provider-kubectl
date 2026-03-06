@@ -189,7 +189,7 @@ func fieldsAttrTypes() map[string]attr.Type {
 }
 
 // setEntryAttrTypes returns the attribute types map for set / set_wo list entries.
-func setEntryAttrTypes() map[string]attr.Type {
+func setEntryAttrTypes() map[string]attr.Type { //nolint:unused
 	return map[string]attr.Type{
 		"name":  types.StringType,
 		"value": types.StringType,
