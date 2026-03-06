@@ -3,11 +3,14 @@ package kubectl
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +43,7 @@ import (
 	meta_v1_unstruct "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	k8syaml "sigs.k8s.io/yaml"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -68,14 +72,13 @@ type manifestResourceModel struct {
 	Status       types.Dynamic  `tfsdk:"status"`
 	Object       types.Dynamic  `tfsdk:"object"`
 	Fields       types.Object   `tfsdk:"fields"`
+	Set          types.List     `tfsdk:"set"`
+	SetWo        types.List     `tfsdk:"set_wo"`
 	Delete       types.Object   `tfsdk:"delete"`
 	Wait         types.Object   `tfsdk:"wait"`
 	Error        types.Object   `tfsdk:"error"`
 	FieldManager types.Object   `tfsdk:"field_manager"`
 	Timeouts     timeouts.Value `tfsdk:"timeouts"`
-	// FieldsWo is always null in state; write-only values are read from config
-	// in Create/Update and applied before sending to the Kubernetes API.
-	FieldsWo types.Dynamic `tfsdk:"fields_wo"`
 }
 
 // waitModel describes the wait attribute.
@@ -112,6 +115,12 @@ type fieldsModel struct {
 	Immutable types.List `tfsdk:"immutable"`
 }
 
+// setEntryModel describes a single set or set_wo entry.
+type setEntryModel struct {
+	Name  types.String `tfsdk:"name"`
+	Value types.String `tfsdk:"value"`
+}
+
 // deleteModel describes the delete attribute.
 type deleteModel struct {
 	Skip    types.Bool   `tfsdk:"skip"`
@@ -122,12 +131,6 @@ type deleteModel struct {
 type fieldManagerModel struct {
 	Name           types.String `tfsdk:"name"`
 	ForceConflicts types.Bool   `tfsdk:"force_conflicts"`
-}
-
-// fieldsWoEntryModel describes a single write-only field override entry.
-type fieldsWoEntryModel struct {
-	Key   types.String  `tfsdk:"key"`
-	Value types.Dynamic `tfsdk:"value"`
 }
 
 // manifestIdentityModel describes the resource identity.
@@ -182,6 +185,14 @@ func fieldsAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
 		"computed":  types.ListType{ElemType: types.StringType},
 		"immutable": types.ListType{ElemType: types.StringType},
+	}
+}
+
+// setEntryAttrTypes returns the attribute types map for set / set_wo list entries.
+func setEntryAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"name":  types.StringType,
+		"value": types.StringType,
 	}
 }
 
@@ -337,19 +348,47 @@ func (r *manifestResource) Schema(
 							"If any of these fields change, the resource will be replaced (destroyed and re-created). " +
 							"Uses dot-separated paths (e.g., `spec.selector`).",
 					},
-					"set": schema.ListAttribute{
-						ElementType: types.StringType,
-						Optional:    true,
-						MarkdownDescription: "List of manifest field paths that should be set to the planned value on every apply, even if the value hasn't changed. " +
-							"Useful for fields that are defaulted or mutated by the API server and need to be kept in sync with the plan. " +
-							"Uses dot-separated paths (e.g., `spec.replicas`).",
+				},
+			},
+			"set": schema.ListNestedAttribute{
+				Optional: true,
+				MarkdownDescription: "Field overrides applied on top of the manifest before sending to the Kubernetes API. " +
+					"Each entry specifies a dot-separated field path and a YAML-encoded value to set. " +
+					"Useful for fields that are defaulted or mutated by the API server and need to be kept in sync with the plan.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"name": schema.StringAttribute{
+							Required:            true,
+							MarkdownDescription: "Dot-separated manifest field path (e.g., `spec.replicas`, `metadata.labels`).",
+						},
+						"value": schema.StringAttribute{
+							Required: true,
+							MarkdownDescription: "YAML-encoded value to set at the given field path. " +
+								"Scalar values can be provided directly (e.g., `\"3\"`, `\"true\"`, `\"hello\"`). " +
+								"Complex values use YAML syntax (e.g., `\"key: value\"`).",
+						},
 					},
-					"set_wo": schema.ListAttribute{
-						ElementType: types.StringType,
-						Optional:    true,
-						WriteOnly:   true,
-						MarkdownDescription: "List of manifest field paths that should be set without waiting for the API server to acknowledge. " +
-							"Uses dot-separated paths (e.g., `spec.replicas`).",
+				},
+			},
+			"set_wo": schema.ListNestedAttribute{
+				Optional:  true,
+				WriteOnly: true,
+				MarkdownDescription: "Write-only field overrides applied on top of the manifest before sending to the Kubernetes API. " +
+					"Values are YAML-encoded strings that are not persisted in Terraform state. " +
+					"The field paths are masked from the `object` attribute on read. " +
+					"Use this for sensitive values such as passwords, API keys, or secrets.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"name": schema.StringAttribute{
+							Required:            true,
+							WriteOnly:           true,
+							MarkdownDescription: "Dot-separated manifest field path (e.g., `data.password`, `spec.template.spec.containers.0.env.0.value`).",
+						},
+						"value": schema.StringAttribute{
+							Required:            true,
+							WriteOnly:           true,
+							MarkdownDescription: "YAML-encoded sensitive value to set at the given field path. Not persisted in state.",
+						},
 					},
 				},
 			},
@@ -500,16 +539,6 @@ func (r *manifestResource) Schema(
 					},
 				},
 			},
-			"fields_wo": schema.DynamicAttribute{
-				Optional:  true,
-				WriteOnly: true,
-				MarkdownDescription: "Write-only field overrides merged into the manifest before applying. " +
-					"Provide a map of dot-notation paths to sensitive values that should not be " +
-					"stored in Terraform state (e.g. `{\"data.password\" = base64encode(var.password)}`). " +
-					"Array elements can be addressed by index (e.g. " +
-					"`spec.template.spec.containers.0.env.0.value`). " +
-					"These paths are excluded from the `object` attribute on read.",
-			},
 		},
 	}
 }
@@ -640,28 +669,36 @@ func (r *manifestResource) Create(
 		return
 	}
 
-	// Read write-only fields from config (unavailable in plan — TPF nullifies WO in plan/state).
-	var fieldsWo types.Dynamic
-	diags = req.Config.GetAttribute(ctx, path.Root("fields_wo"), &fieldsWo)
-	resp.Diagnostics.Append(diags...)
+	// Read set entries from plan (regular values available in plan).
+	setEntries := extractSetEntries(ctx, plan.Set, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Read write-only set entries from config (unavailable in plan — TPF nullifies WO in plan/state).
+	setWoEntries, setWoKeys := extractSetWoEntries(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	// Persist the WO key paths in private state so Read can mask them from object.
-	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
-		keys, d := extractFieldsWoKeys(ctx, fieldsWo)
-		resp.Diagnostics.Append(d...)
-		if !resp.Diagnostics.HasError() && len(keys) > 0 {
-			keysJSON, err := json.Marshal(keys)
-			if err == nil {
-				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
-			}
+	if len(setWoKeys) > 0 {
+		keysJSON, err := json.Marshal(setWoKeys)
+		if err == nil {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
 		}
+	}
+
+	// Store a checksum of set_wo entries so ModifyPlan can detect value changes.
+	if checksum := computeSetWoChecksum(setWoEntries); checksum != "" {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "set_wo_checksum", []byte(checksum))...)
 	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Combine set and set_wo overrides for injection into manifest.
+	allOverrides := append(setEntries, setWoEntries...)
 
 	// Get timeout from config
 	createTimeout, diags := plan.Timeouts.Create(ctx, 10*time.Minute)
@@ -687,7 +724,7 @@ func (r *manifestResource) Create(
 	}
 
 	err := backoff.Retry(func() error {
-		err := r.applyManifest(createCtx, &plan, fieldsWo)
+		err := r.applyManifest(createCtx, &plan, allOverrides)
 		var ece *errorConditionError
 		if errors.As(err, &ece) {
 			return backoff.Permanent(err)
@@ -710,6 +747,13 @@ func (r *manifestResource) Create(
 			fmt.Sprintf("Could not apply manifest: %s", err),
 		)
 		return
+	}
+
+	// Mask write-only field paths from object so sensitive values don't persist in state.
+	if len(setWoKeys) > 0 {
+		if err := maskFieldsWoPaths(ctx, &plan, setWoKeys); err != nil {
+			log.Printf("[WARN] Failed to mask set_wo paths in object: %v", err)
+		}
 	}
 
 	// Set state
@@ -855,28 +899,36 @@ func (r *manifestResource) Update(
 		return
 	}
 
-	// Read write-only fields from config (unavailable in plan — TPF nullifies WO in plan/state).
-	var fieldsWo types.Dynamic
-	diags = req.Config.GetAttribute(ctx, path.Root("fields_wo"), &fieldsWo)
-	resp.Diagnostics.Append(diags...)
+	// Read set entries from plan (regular values available in plan).
+	setEntries := extractSetEntries(ctx, plan.Set, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Read write-only set entries from config (unavailable in plan — TPF nullifies WO in plan/state).
+	setWoEntries, setWoKeys := extractSetWoEntries(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	// Persist the WO key paths in private state so Read can mask them from object.
-	if !fieldsWo.IsNull() && !fieldsWo.IsUnknown() {
-		keys, d := extractFieldsWoKeys(ctx, fieldsWo)
-		resp.Diagnostics.Append(d...)
-		if !resp.Diagnostics.HasError() && len(keys) > 0 {
-			keysJSON, err := json.Marshal(keys)
-			if err == nil {
-				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
-			}
+	if len(setWoKeys) > 0 {
+		keysJSON, err := json.Marshal(setWoKeys)
+		if err == nil {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "fields_wo_keys", keysJSON)...)
 		}
+	}
+
+	// Store a checksum of set_wo entries so ModifyPlan can detect value changes.
+	if checksum := computeSetWoChecksum(setWoEntries); checksum != "" {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "set_wo_checksum", []byte(checksum))...)
 	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Combine set and set_wo overrides for injection into manifest.
+	allOverrides := append(setEntries, setWoEntries...)
 
 	// Get timeout
 	updateTimeout, diags := plan.Timeouts.Update(ctx, 10*time.Minute)
@@ -901,7 +953,7 @@ func (r *manifestResource) Update(
 	}
 
 	err := backoff.Retry(func() error {
-		err := r.applyManifest(updateCtx, &plan, fieldsWo)
+		err := r.applyManifest(updateCtx, &plan, allOverrides)
 		var ece *errorConditionError
 		if errors.As(err, &ece) {
 			return backoff.Permanent(err)
@@ -924,6 +976,13 @@ func (r *manifestResource) Update(
 			fmt.Sprintf("Could not apply manifest: %s", err),
 		)
 		return
+	}
+
+	// Mask write-only field paths from object so sensitive values don't persist in state.
+	if len(setWoKeys) > 0 {
+		if err := maskFieldsWoPaths(ctx, &plan, setWoKeys); err != nil {
+			log.Printf("[WARN] Failed to mask set_wo paths in object: %v", err)
+		}
 	}
 
 	// Set state
@@ -1268,13 +1327,30 @@ func (r *manifestResource) ModifyPlan(
 		}
 	}
 
-	// Determine if user-provided manifest changed between plan and state.
+	// Determine if user-provided manifest or set overrides changed between plan and state.
 	// Compare plan.Manifest AFTER OpenAPI morphing so both plan and state are in
 	// the same full-schema shape. Comparing the pre-morph (compact) user plan to
 	// the post-morph state would always differ even when nothing actually changed.
+	// Also check set entries since they inject values into the applied manifest.
 	// If something changed, status/object must be Unknown (provider will produce new values).
 	// If nothing changed, preserve state values to prevent perpetual diffs.
-	hasChange := !plan.Manifest.Equal(state.Manifest)
+	hasChange := !plan.Manifest.Equal(state.Manifest) || !plan.Set.Equal(state.Set)
+
+	// Detect set_wo value changes via checksum comparison. Write-only values
+	// are absent from plan/state, so we hash config values and compare with the
+	// checksum stored in private state during the last apply.
+	if !hasChange && req.Private != nil {
+		var setWoDiags diag.Diagnostics
+		woEntries, _ := extractSetWoEntries(ctx, req.Config, &setWoDiags)
+		if !setWoDiags.HasError() {
+			newChecksum := computeSetWoChecksum(woEntries)
+			storedChecksum, d := req.Private.GetKey(ctx, "set_wo_checksum")
+			resp.Diagnostics.Append(d...)
+			if newChecksum != string(storedChecksum) {
+				hasChange = true
+			}
+		}
+	}
 
 	if hasChange {
 		plan.Status = types.DynamicUnknown()
@@ -1619,6 +1695,7 @@ func (r *manifestResource) getResourceInterface(
 func (r *manifestResource) applyManifest(
 	ctx context.Context,
 	model *manifestResourceModel,
+	overrides []setEntryModel,
 ) error {
 	// Save user-provided manifest before readManifest overwrites it.
 	// The API response includes server-generated fields (uid, creationTimestamp, etc.)
@@ -1626,18 +1703,20 @@ func (r *manifestResource) applyManifest(
 	// "wrong final value type" consistency check to fail.
 	plannedManifest := model.Manifest
 
-	// Inject write-only fields into the manifest before applying.
-	if !model.FieldsWo.IsNull() && !model.FieldsWo.IsUnknown() {
+	// Inject set / set_wo overrides into the manifest before applying.
+	if len(overrides) > 0 {
 		manifestMap, d := dynamicToMap(ctx, model.Manifest)
-		if !d.HasError() && manifestMap != nil {
-			if err := applyFieldsWoToMap(ctx, manifestMap, model.FieldsWo); err != nil {
-				return fmt.Errorf("failed to inject fields_wo into manifest: %w", err)
-			}
-			mergedDynamic, d := mapToDynamic(ctx, manifestMap)
-			if !d.HasError() {
-				model.Manifest = mergedDynamic
-			}
+		if d.HasError() {
+			return fmt.Errorf("failed to convert manifest to map for set overrides: %v", d)
 		}
+		if err := injectSetOverrides(manifestMap, overrides); err != nil {
+			return fmt.Errorf("failed to inject set overrides into manifest: %w", err)
+		}
+		injected, d := mapToDynamic(ctx, manifestMap)
+		if d.HasError() {
+			return fmt.Errorf("failed to convert manifest back to dynamic after overrides: %v", d)
+		}
+		model.Manifest = injected
 	}
 
 	// Delegate to applyManifestV2 for the actual apply
@@ -1648,16 +1727,6 @@ func (r *manifestResource) applyManifest(
 	// Read back to populate computed fields (ID, status, object) from server response
 	if err := r.readManifest(ctx, model); err != nil {
 		return fmt.Errorf("failed to read manifest after apply: %w", err)
-	}
-
-	// Mask write-only paths in object so sensitive values don't persist in state.
-	if !model.FieldsWo.IsNull() && !model.FieldsWo.IsUnknown() {
-		keys, _ := extractFieldsWoKeys(ctx, model.FieldsWo)
-		if len(keys) > 0 {
-			if err := maskFieldsWoPaths(ctx, model, keys); err != nil {
-				log.Printf("[WARN] Failed to mask fields_wo paths in object: %v", err)
-			}
-		}
 	}
 
 	// Restore user-provided manifest to maintain type compatibility with plan
@@ -2295,38 +2364,111 @@ func isNotFoundError(err error) bool {
 	return api.IsNotFoundError(err)
 }
 
-// extractFieldsWoKeys returns the dot-path key strings from a fields_wo dynamic map.
-func extractFieldsWoKeys(ctx context.Context, fieldsWo types.Dynamic) ([]string, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if fieldsWo.IsNull() || fieldsWo.IsUnknown() {
-		return nil, diags
-	}
-	woMap, d := dynamicToMap(ctx, fieldsWo)
-	diags.Append(d...)
-	if diags.HasError() || woMap == nil {
-		return nil, diags
-	}
-	keys := make([]string, 0, len(woMap))
-	for k := range woMap {
-		keys = append(keys, k)
-	}
-	return keys, diags
-}
-
-// applyFieldsWoToMap injects write-only field values into a manifest map at their dot-paths.
-func applyFieldsWoToMap(ctx context.Context, m map[string]any, fieldsWo types.Dynamic) error {
-	if fieldsWo.IsNull() || fieldsWo.IsUnknown() {
+// extractSetEntries reads a list of setEntryModel objects from a types.List.
+func extractSetEntries(
+	ctx context.Context,
+	list types.List,
+	diagnostics *diag.Diagnostics,
+) []setEntryModel {
+	if list.IsNull() || list.IsUnknown() {
 		return nil
 	}
-	woMap, d := dynamicToMap(ctx, fieldsWo)
-	if d.HasError() {
-		return fmt.Errorf("fields_wo must be a map of {\"dot.path\": value}: %v", d)
+	var entries []setEntryModel
+	d := list.ElementsAs(ctx, &entries, false)
+	diagnostics.Append(d...)
+	return entries
+}
+
+// extractSetWoEntries reads set_wo entries from config (write-only attributes must be
+// read from config, not plan/state) and returns them along with their name keys.
+func extractSetWoEntries(
+	ctx context.Context,
+	config tfsdk.Config,
+	diagnostics *diag.Diagnostics,
+) ([]setEntryModel, []string) {
+	var setWo types.List
+	d := config.GetAttribute(ctx, path.Root("set_wo"), &setWo)
+	diagnostics.Append(d...)
+	if diagnostics.HasError() || setWo.IsNull() || setWo.IsUnknown() {
+		return nil, nil
 	}
-	for key, val := range woMap {
-		parts := strings.Split(key, ".")
-		if err := woSetAtPath(m, parts, val); err != nil {
-			return fmt.Errorf("failed to set path %q: %w", key, err)
+	entries := extractSetEntries(ctx, setWo, diagnostics)
+	if diagnostics.HasError() {
+		return nil, nil
+	}
+	keys := make([]string, len(entries))
+	for i, e := range entries {
+		keys[i] = e.Name.ValueString()
+	}
+	return entries, keys
+}
+
+// computeSetWoChecksum produces a deterministic SHA-256 hex digest of all set_wo
+// entries so that changes to write-only values can be detected across plan cycles.
+func computeSetWoChecksum(entries []setEntryModel) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	// Build sorted "name=value" pairs for deterministic hashing.
+	pairs := make([]string, len(entries))
+	for i, e := range entries {
+		pairs[i] = e.Name.ValueString() + "=" + e.Value.ValueString()
+	}
+	sort.Strings(pairs)
+	h := sha256.Sum256([]byte(strings.Join(pairs, "\n")))
+	return hex.EncodeToString(h[:])
+}
+
+// setAtPath sets a value at the given dot-separated path in a nested map,
+// creating intermediate maps as needed. Numeric path segments index into slices.
+func setAtPath(node map[string]any, pathStr string, value any) {
+	parts := strings.Split(pathStr, ".")
+	current := any(node)
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			// Last segment — set the value
+			if m, ok := current.(map[string]any); ok {
+				m[part] = value
+			}
+			return
 		}
+		// Navigate/create intermediate containers
+		switch n := current.(type) {
+		case map[string]any:
+			next, exists := n[part]
+			if !exists {
+				// Create intermediate map
+				newMap := make(map[string]any)
+				n[part] = newMap
+				current = newMap
+			} else {
+				current = next
+			}
+		case []any:
+			idx, err := strconv.Atoi(part)
+			if err != nil || idx < 0 || idx >= len(n) {
+				return
+			}
+			current = n[idx]
+		default:
+			return
+		}
+	}
+}
+
+// injectSetOverrides applies set entry values into a manifest map at their named paths.
+// Values are YAML-encoded strings that are decoded before injection.
+func injectSetOverrides(manifestMap map[string]any, entries []setEntryModel) error {
+	for _, entry := range entries {
+		var parsed any
+		if err := k8syaml.Unmarshal([]byte(entry.Value.ValueString()), &parsed); err != nil {
+			return fmt.Errorf(
+				"failed to decode YAML value for %q: %w",
+				entry.Name.ValueString(),
+				err,
+			)
+		}
+		setAtPath(manifestMap, entry.Name.ValueString(), parsed)
 	}
 	return nil
 }
@@ -2353,51 +2495,6 @@ func maskFieldsWoPaths(ctx context.Context, model *manifestResourceModel, keys [
 	}
 	model.Object = maskedDynamic
 	return nil
-}
-
-// woSetAtPath recursively sets value at the given path parts within node.
-// Intermediate maps are created if missing. Array elements are accessed by integer index.
-func woSetAtPath(node any, parts []string, value any) error {
-	if len(parts) == 0 {
-		return nil
-	}
-	if len(parts) == 1 {
-		switch n := node.(type) {
-		case map[string]any:
-			n[parts[0]] = value
-			return nil
-		case []any:
-			idx, err := strconv.Atoi(parts[0])
-			if err != nil {
-				return fmt.Errorf("expected integer index, got %q", parts[0])
-			}
-			if idx < 0 || idx >= len(n) {
-				return fmt.Errorf("index %d out of range [0..%d)", idx, len(n))
-			}
-			n[idx] = value
-			return nil
-		}
-		return fmt.Errorf("cannot set key %q on %T", parts[0], node)
-	}
-	switch n := node.(type) {
-	case map[string]any:
-		child, exists := n[parts[0]]
-		if !exists || child == nil {
-			child = make(map[string]any)
-			n[parts[0]] = child
-		}
-		return woSetAtPath(child, parts[1:], value)
-	case []any:
-		idx, err := strconv.Atoi(parts[0])
-		if err != nil {
-			return fmt.Errorf("expected integer index, got %q", parts[0])
-		}
-		if idx < 0 || idx >= len(n) {
-			return fmt.Errorf("index %d out of range [0..%d)", idx, len(n))
-		}
-		return woSetAtPath(n[idx], parts[1:], value)
-	}
-	return fmt.Errorf("cannot navigate into %T at key %q", node, parts[0])
 }
 
 // woDeleteAtPath removes the leaf key at the given path parts from the nested structure.
