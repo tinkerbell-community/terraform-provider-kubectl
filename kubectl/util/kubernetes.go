@@ -48,9 +48,13 @@ type ExecConfigData struct {
 	Args       types.List   `tfsdk:"args"`
 }
 
-// InitializeConfiguration creates a Kubernetes REST config from provider configuration
-// This is adapted from the SDK v2 version to work with Plugin Framework types.
-func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclient.Config, error) {
+// InitializeConfiguration creates a Kubernetes client config from provider configuration.
+// It returns a clientcmd.ClientConfig that can be used to derive REST configs,
+// discovery clients, and REST mappers (following the Helm provider pattern).
+func InitializeConfiguration(
+	ctx context.Context,
+	config ConfigData,
+) (clientcmd.ClientConfig, error) {
 	overrides := &clientcmd.ConfigOverrides{}
 	loader := &clientcmd.ClientConfigLoadingRules{}
 
@@ -201,13 +205,13 @@ func InitializeConfiguration(ctx context.Context, config ConfigData) (*restclien
 		overrides.ClusterInfo.TLSServerName = config.TLSServerName.ValueString()
 	}
 
-	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, overrides)
-	cfg, err := cc.ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load kubernetes config: %w", err)
+	// When no kubeconfig files are being loaded (e.g. load_config_file = false
+	// with explicit credentials), use an empty base config so the overrides
+	// alone can produce a valid REST config.
+	if loader.ExplicitPath != "" || len(loader.Precedence) > 0 {
+		return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, overrides), nil
 	}
-
-	return cfg, nil
+	return clientcmd.NewDefaultClientConfig(clientcmdapi.Config{}, overrides), nil
 }
 
 // ComputeDiscoverCacheDir takes the parentDir and the host and comes up with a "usually non-colliding" name.

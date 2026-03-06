@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/api"
 	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/util"
@@ -18,12 +16,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/mitchellh/go-homedir"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sresource "k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/discovery"
-	diskcached "k8s.io/client-go/discovery/cached/disk"
+	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
@@ -45,6 +42,7 @@ type kubectlProvider struct {
 
 // kubectlProviderData contains the configured Kubernetes clients and settings.
 type kubectlProviderData struct {
+	ClientConfig        clientcmd.ClientConfig
 	MainClientset       *kubernetes.Clientset
 	RestConfig          *restclient.Config
 	AggregatorClientset *aggregator.Clientset
@@ -64,26 +62,22 @@ type kubectlProviderData struct {
 var _ k8sresource.RESTClientGetter = &kubectlProviderData{}
 
 func (p *kubectlProviderData) ToRawKubeConfigLoader() clientcmd.ClientConfig {
-	return nil
+	return p.ClientConfig
 }
 
 func (p *kubectlProviderData) ToRESTConfig() (*restclient.Config, error) {
-	return p.RestConfig, nil
+	return p.ToRawKubeConfigLoader().ClientConfig()
 }
 
 func (p *kubectlProviderData) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, error) {
-	home, _ := homedir.Dir()
-	httpCacheDir := filepath.Join(home, ".kube", "http-cache")
-	discoveryCacheDir := util.ComputeDiscoverCacheDir(
-		filepath.Join(home, ".kube", "cache", "discovery"),
-		p.RestConfig.Host,
-	)
-	return diskcached.NewCachedDiscoveryClientForConfig(
-		p.RestConfig,
-		discoveryCacheDir,
-		httpCacheDir,
-		10*time.Minute,
-	)
+	config, err := p.ToRESTConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	return memory.NewMemCacheClient(
+		discovery.NewDiscoveryClientForConfigOrDie(config),
+	), nil
 }
 
 func (p *kubectlProviderData) ToRESTMapper() (meta.RESTMapper, error) {
@@ -254,6 +248,12 @@ func (p *kubectlProvider) Configure(
 	req provider.ConfigureRequest,
 	resp *provider.ConfigureResponse,
 ) {
+	if req.ClientCapabilities.DeferralAllowed && !req.Config.Raw.IsFullyKnown() {
+		resp.Deferred = &provider.Deferred{
+			Reason: provider.DeferredReasonProviderConfigUnknown,
+		}
+	}
+
 	var config util.ConfigData
 
 	diags := req.Config.Get(ctx, &config)
@@ -396,11 +396,20 @@ func (p *kubectlProvider) Configure(
 		}
 	}
 
-	cfg, err := util.InitializeConfiguration(ctx, config)
+	clientConfig, err := util.InitializeConfiguration(ctx, config)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Kubernetes Client",
 			fmt.Sprintf("Failed to initialize Kubernetes configuration: %s", err),
+		)
+		return
+	}
+
+	cfg, err := clientConfig.ClientConfig()
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create Kubernetes Client",
+			fmt.Sprintf("Failed to load Kubernetes REST config: %s", err),
 		)
 		return
 	}
@@ -434,6 +443,7 @@ func (p *kubectlProvider) Configure(
 
 	// Create provider data structure
 	providerData := &kubectlProviderData{
+		ClientConfig:        clientConfig,
 		MainClientset:       k8sClient,
 		RestConfig:          cfg,
 		AggregatorClientset: aggClient,
