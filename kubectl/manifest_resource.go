@@ -1620,8 +1620,10 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 	// are available via the `object` computed attribute on the resource.
 	filteredContent := deepReconcileMaps(proposedManifestMap, resultContent)
 
-	// Update plan manifest from reconciled (compact) result
-	manifestDynamic, d := mapToDynamic(ctx, filteredContent)
+	// Update plan manifest from reconciled (compact) result, preserving the
+	// original config types (Map vs Object, List vs Tuple) so the planned
+	// value matches the config value for Terraform's plan validation.
+	manifestDynamic, d := mapToDynamicPreservingTypes(ctx, filteredContent, plan.Manifest)
 	resp.Diagnostics.Append(d...)
 	if !resp.Diagnostics.HasError() {
 		plan.Manifest = manifestDynamic

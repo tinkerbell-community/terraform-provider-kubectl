@@ -230,3 +230,165 @@ func decodeSequence(ctx context.Context, s []any) (attr.Value, diag.Diagnostics)
 
 	return types.TupleValue(tl, vl)
 }
+
+// mapToDynamicPreservingTypes converts map[string]any to types.Dynamic while
+// preserving the container types (Map vs Object, List vs Tuple) from a
+// reference Dynamic value. HCL can produce either MapVal or ObjectVal for
+// map-like structures depending on context (literal vs variable), and
+// Terraform validates that planned values match config types. Without
+// preserving the original types, the OpenAPI round-trip in modifyPlanWithOpenAPI
+// always produces ObjectVal/TupleVal, causing "Provider produced invalid plan"
+// errors when the config uses MapVal/ListVal.
+func mapToDynamicPreservingTypes(
+	ctx context.Context,
+	m map[string]any,
+	hint types.Dynamic,
+) (types.Dynamic, diag.Diagnostics) {
+	if m == nil {
+		return types.DynamicNull(), nil
+	}
+
+	var hintValue attr.Value
+	if !hint.IsNull() && !hint.IsUnknown() {
+		hintValue = hint.UnderlyingValue()
+	}
+
+	attrVal, diags := decodeAnyPreservingType(ctx, m, hintValue)
+	if diags.HasError() {
+		return types.DynamicNull(), diags
+	}
+
+	return types.DynamicValue(attrVal), nil
+}
+
+// decodeAnyPreservingType converts a Go value to attr.Value, using hint to
+// choose Map vs Object and List vs Tuple container types.
+func decodeAnyPreservingType(
+	ctx context.Context,
+	val any,
+	hint attr.Value,
+) (attr.Value, diag.Diagnostics) {
+	switch v := val.(type) {
+	case nil:
+		return types.DynamicNull(), nil
+	case map[string]any:
+		return decodeMappingPreservingType(ctx, v, hint)
+	case []any:
+		return decodeSequencePreservingType(ctx, v, hint)
+	default:
+		return decodeAny(ctx, val)
+	}
+}
+
+func decodeMappingPreservingType(
+	ctx context.Context,
+	m map[string]any,
+	hint attr.Value,
+) (attr.Value, diag.Diagnostics) {
+	// Build child hints from the reference value.
+	childHints := make(map[string]attr.Value)
+	_, preferMap := hint.(basetypes.MapValue)
+
+	switch h := hint.(type) {
+	case basetypes.MapValue:
+		for k, v := range h.Elements() {
+			childHints[k] = v
+		}
+	case basetypes.ObjectValue:
+		for k, v := range h.Attributes() {
+			childHints[k] = v
+		}
+	}
+
+	vm := make(map[string]attr.Value, len(m))
+	tm := make(map[string]attr.Type, len(m))
+
+	for k, v := range m {
+		vv, diags := decodeAnyPreservingType(ctx, v, childHints[k])
+		if diags.HasError() {
+			return nil, diags
+		}
+		if vv == nil {
+			vv = types.DynamicNull()
+		}
+		vm[k] = vv
+		tm[k] = vv.Type(ctx)
+	}
+
+	if preferMap && len(vm) > 0 {
+		// MapValue requires homogeneous element types.
+		var commonType attr.Type
+		homogeneous := true
+		for _, t := range tm {
+			if commonType == nil {
+				commonType = t
+			} else if !t.Equal(commonType) {
+				homogeneous = false
+				break
+			}
+		}
+		if homogeneous {
+			mapVal, diags := types.MapValue(commonType, vm)
+			if !diags.HasError() {
+				return mapVal, nil
+			}
+		}
+	}
+
+	return types.ObjectValue(tm, vm)
+}
+
+func decodeSequencePreservingType(
+	ctx context.Context,
+	s []any,
+	hint attr.Value,
+) (attr.Value, diag.Diagnostics) {
+	// Build child hints from the reference value.
+	var childHints []attr.Value
+	_, preferList := hint.(basetypes.ListValue)
+
+	switch h := hint.(type) {
+	case basetypes.ListValue:
+		childHints = h.Elements()
+	case basetypes.TupleValue:
+		childHints = h.Elements()
+	}
+
+	vl := make([]attr.Value, len(s))
+	tl := make([]attr.Type, len(s))
+
+	for i, v := range s {
+		var childHint attr.Value
+		if i < len(childHints) {
+			childHint = childHints[i]
+		}
+		vv, diags := decodeAnyPreservingType(ctx, v, childHint)
+		if diags.HasError() {
+			return nil, diags
+		}
+		if vv == nil {
+			vv = types.DynamicNull()
+		}
+		vl[i] = vv
+		tl[i] = vv.Type(ctx)
+	}
+
+	if preferList && len(vl) > 0 {
+		commonType := tl[0]
+		homogeneous := true
+		for i := 1; i < len(tl); i++ {
+			if !tl[i].Equal(commonType) {
+				homogeneous = false
+				break
+			}
+		}
+		if homogeneous {
+			listVal, diags := types.ListValue(commonType, vl)
+			if !diags.HasError() {
+				return listVal, nil
+			}
+		}
+	}
+
+	return types.TupleValue(tl, vl)
+}

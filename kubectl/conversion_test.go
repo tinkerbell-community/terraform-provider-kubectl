@@ -378,3 +378,178 @@ func TestDecodeAny(t *testing.T) {
 		})
 	}
 }
+
+func TestMapToDynamicPreservingTypes(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name  string
+		input map[string]any
+		hint  types.Dynamic
+		check func(t *testing.T, result types.Dynamic)
+	}{
+		{
+			name: "preserves MapVal for homogeneous string values",
+			input: map[string]any{
+				"distro":    "talos",
+				"image_tag": "v1.12.5",
+				"version":   "v1.12.5",
+			},
+			hint: types.DynamicValue(types.MapValueMust(
+				types.StringType,
+				map[string]attr.Value{
+					"distro":    types.StringValue("talos"),
+					"image_tag": types.StringValue("v1.12.4"),
+					"version":   types.StringValue("v1.12.4"),
+				},
+			)),
+			check: func(t *testing.T, result types.Dynamic) {
+				underlying := result.UnderlyingValue()
+				if _, ok := underlying.(types.Map); !ok {
+					t.Errorf("Expected Map type, got %T", underlying)
+				}
+			},
+		},
+		{
+			name: "preserves ObjectVal when hint is Object",
+			input: map[string]any{
+				"name":      "test",
+				"namespace": "default",
+			},
+			hint: types.DynamicValue(types.ObjectValueMust(
+				map[string]attr.Type{
+					"name":      types.StringType,
+					"namespace": types.StringType,
+				},
+				map[string]attr.Value{
+					"name":      types.StringValue("test"),
+					"namespace": types.StringValue("default"),
+				},
+			)),
+			check: func(t *testing.T, result types.Dynamic) {
+				underlying := result.UnderlyingValue()
+				if _, ok := underlying.(types.Object); !ok {
+					t.Errorf("Expected Object type, got %T", underlying)
+				}
+			},
+		},
+		{
+			name: "preserves ListVal for homogeneous elements",
+			input: map[string]any{
+				"items": []any{
+					map[string]any{"device": "/dev/sda"},
+					map[string]any{"device": "/dev/sdb"},
+				},
+			},
+			hint: types.DynamicValue(types.ObjectValueMust(
+				map[string]attr.Type{
+					"items": types.ListType{ElemType: types.ObjectType{
+						AttrTypes: map[string]attr.Type{"device": types.StringType},
+					}},
+				},
+				map[string]attr.Value{
+					"items": types.ListValueMust(
+						types.ObjectType{
+							AttrTypes: map[string]attr.Type{"device": types.StringType},
+						},
+						[]attr.Value{
+							types.ObjectValueMust(
+								map[string]attr.Type{"device": types.StringType},
+								map[string]attr.Value{"device": types.StringValue("/dev/sda")},
+							),
+						},
+					),
+				},
+			)),
+			check: func(t *testing.T, result types.Dynamic) {
+				underlying := result.UnderlyingValue()
+				obj, ok := underlying.(types.Object)
+				if !ok {
+					t.Fatalf("Expected Object type, got %T", underlying)
+				}
+				items := obj.Attributes()["items"]
+				if _, ok := items.(types.List); !ok {
+					t.Errorf("Expected List type for items, got %T", items)
+				}
+			},
+		},
+		{
+			name: "preserves nested MapVal inside ObjectVal",
+			input: map[string]any{
+				"metadata": map[string]any{
+					"name": "test",
+				},
+				"spec": map[string]any{
+					"operating_system": map[string]any{
+						"distro":  "talos",
+						"version": "v1.12.5",
+					},
+				},
+			},
+			hint: types.DynamicValue(types.ObjectValueMust(
+				map[string]attr.Type{
+					"metadata": types.ObjectType{
+						AttrTypes: map[string]attr.Type{"name": types.StringType},
+					},
+					"spec": types.ObjectType{
+						AttrTypes: map[string]attr.Type{
+							"operating_system": types.MapType{ElemType: types.StringType},
+						},
+					},
+				},
+				map[string]attr.Value{
+					"metadata": types.ObjectValueMust(
+						map[string]attr.Type{"name": types.StringType},
+						map[string]attr.Value{"name": types.StringValue("test")},
+					),
+					"spec": types.ObjectValueMust(
+						map[string]attr.Type{
+							"operating_system": types.MapType{ElemType: types.StringType},
+						},
+						map[string]attr.Value{
+							"operating_system": types.MapValueMust(
+								types.StringType,
+								map[string]attr.Value{
+									"distro":  types.StringValue("talos"),
+									"version": types.StringValue("v1.12.4"),
+								},
+							),
+						},
+					),
+				},
+			)),
+			check: func(t *testing.T, result types.Dynamic) {
+				obj := result.UnderlyingValue().(types.Object)
+				spec := obj.Attributes()["spec"].(types.Object)
+				os := spec.Attributes()["operating_system"]
+				if _, ok := os.(types.Map); !ok {
+					t.Errorf("Expected Map type for operating_system, got %T", os)
+				}
+			},
+		},
+		{
+			name: "falls back to ObjectVal when no hint",
+			input: map[string]any{
+				"name":      "test",
+				"namespace": "default",
+			},
+			hint: types.DynamicNull(),
+			check: func(t *testing.T, result types.Dynamic) {
+				underlying := result.UnderlyingValue()
+				if _, ok := underlying.(types.Object); !ok {
+					t.Errorf("Expected Object type (default), got %T", underlying)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, diags := mapToDynamicPreservingTypes(ctx, tt.input, tt.hint)
+			if diags.HasError() {
+				t.Fatalf("mapToDynamicPreservingTypes() error = %v", diags)
+			}
+			tt.check(t, got)
+		})
+	}
+}

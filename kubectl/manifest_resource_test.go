@@ -160,6 +160,30 @@ func TestAccResourceKubectlManifest_CRDInstanceInvalidField(t *testing.T) {
 	})
 }
 
+func TestAccResourceKubectlManifest_CRDPreserveUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("testpuf%s.example.com", suffix)
+	crName := fmt.Sprintf("test-puf-%s", suffix)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// A CRD with x-kubernetes-preserve-unknown-fields in its schema
+				// previously caused a panic because the OpenAPI extension value
+				// arrived as a native Go bool instead of json.RawMessage.
+				Config: testAccResourceKubectlManifest_crdPreserveUnknownFields(crdGroup, crName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.crd", "id"),
+					resource.TestCheckResourceAttrSet("kubectl_manifest.cr", "id"),
+				),
+			},
+		},
+	})
+}
+
 func testAccResourceKubectlManifest_crdAndInstance(crdGroup, crName string) string {
 	return fmt.Sprintf(`
 resource "kubectl_manifest" "crd" {
@@ -286,6 +310,72 @@ resource "kubectl_manifest" "widget" {
     spec = {
       color = "blue"
       size  = "not-a-number"
+    }
+  }
+}
+`, crdGroup, crName)
+}
+
+func testAccResourceKubectlManifest_crdPreserveUnknownFields(crdGroup, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "flexobjects.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "FlexObject"
+        listKind = "FlexObjectList"
+        plural   = "flexobjects"
+        singular = "flexobject"
+      }
+      scope = "Namespaced"
+      versions = [
+        {
+          name    = "v1"
+          served  = true
+          storage = true
+          schema = {
+            openAPIV3Schema = {
+              type = "object"
+              properties = {
+                spec = {
+                  type                                   = "object"
+                  "x-kubernetes-preserve-unknown-fields" = true
+                }
+                status = {
+                  type                                   = "object"
+                  "x-kubernetes-preserve-unknown-fields" = true
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1"
+    kind       = "FlexObject"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      arbitraryField = "hello"
+      nested = {
+        deep = true
+        count = 42
+      }
     }
   }
 }
