@@ -519,8 +519,14 @@ func TestMapToDynamicPreservingTypes(t *testing.T) {
 				},
 			)),
 			check: func(t *testing.T, result types.Dynamic) {
-				obj := result.UnderlyingValue().(types.Object)
-				spec := obj.Attributes()["spec"].(types.Object)
+				obj, ok := result.UnderlyingValue().(types.Object)
+				if !ok {
+					t.Fatalf("Expected Object type, got %T", result.UnderlyingValue())
+				}
+				spec, ok := obj.Attributes()["spec"].(types.Object)
+				if !ok {
+					t.Fatalf("Expected Object type for spec, got %T", obj.Attributes()["spec"])
+				}
 				os := spec.Attributes()["operating_system"]
 				if _, ok := os.(types.Map); !ok {
 					t.Errorf("Expected Map type for operating_system, got %T", os)
