@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/hashicorp-oss/terraform-provider-kubectl/kubectl/api"
@@ -43,12 +44,14 @@ type kubectlProvider struct {
 
 // kubectlProviderData contains the configured Kubernetes clients and settings.
 type kubectlProviderData struct {
-	ClientConfig     clientcmd.ClientConfig
+	configData       util.ConfigData
+	configFullyKnown bool
 	ApplyRetryCount  int64
 	terraformVersion string
 
 	// Lazily initialized clients
 	logger              hclog.Logger
+	clientConfig        cache[clientcmd.ClientConfig]
 	restConfig          cache[*restclient.Config]
 	mainClientset       cache[*kubernetes.Clientset]
 	aggregatorClientset cache[*aggregator.Clientset]
@@ -60,10 +63,21 @@ type kubectlProviderData struct {
 	crds                cache[[]unstructured.Unstructured]
 }
 
+// getClientConfig lazily initializes and returns the clientcmd.ClientConfig.
+func (p *kubectlProviderData) getClientConfig() (clientcmd.ClientConfig, error) {
+	return p.clientConfig.Get(func() (clientcmd.ClientConfig, error) {
+		return util.InitializeConfiguration(context.Background(), p.configData)
+	})
+}
+
 // getRestConfig lazily initializes and returns the Kubernetes REST config.
 func (p *kubectlProviderData) getRestConfig() (*restclient.Config, error) {
 	return p.restConfig.Get(func() (*restclient.Config, error) {
-		cfg, err := p.ClientConfig.ClientConfig()
+		cc, err := p.getClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load Kubernetes REST config: %w", err)
+		}
+		cfg, err := cc.ClientConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to load Kubernetes REST config: %w", err)
 		}
@@ -100,7 +114,8 @@ func (p *kubectlProviderData) getAggregatorClientset() (*aggregator.Clientset, e
 var _ k8sresource.RESTClientGetter = &kubectlProviderData{}
 
 func (p *kubectlProviderData) ToRawKubeConfigLoader() clientcmd.ClientConfig {
-	return p.ClientConfig
+	cc, _ := p.getClientConfig()
+	return cc
 }
 
 func (p *kubectlProviderData) ToRESTConfig() (*restclient.Config, error) {
@@ -281,6 +296,8 @@ func (p *kubectlProvider) Schema(
 }
 
 // Configure prepares the Kubernetes client for data sources and resources.
+// Following the Helm provider pattern: resolve env-var defaults here, store
+// the resolved config, and defer all client creation to lazy accessors.
 func (p *kubectlProvider) Configure(
 	ctx context.Context,
 	req provider.ConfigureRequest,
@@ -290,163 +307,153 @@ func (p *kubectlProvider) Configure(
 		resp.Deferred = &provider.Deferred{
 			Reason: provider.DeferredReasonProviderConfigUnknown,
 		}
-		return
 	}
 
-	var config util.ConfigData
+	// Read env-var defaults first (like Helm provider).
+	kubeHost := os.Getenv("KUBE_HOST")
+	kubeUser := os.Getenv("KUBE_USER")
+	kubePassword := os.Getenv("KUBE_PASSWORD")
+	kubeInsecureStr := os.Getenv("KUBE_INSECURE")
+	kubeTLSServerName := os.Getenv("KUBE_TLS_SERVER_NAME")
+	kubeClientCert := os.Getenv("KUBE_CLIENT_CERT_DATA")
+	kubeClientKey := os.Getenv("KUBE_CLIENT_KEY_DATA")
+	kubeCACert := os.Getenv("KUBE_CLUSTER_CA_CERT_DATA")
+	kubeConfigPath := os.Getenv("KUBE_CONFIG_PATH")
+	if kubeConfigPath == "" {
+		kubeConfigPath = os.Getenv("KUBE_CONFIG")
+	}
+	if kubeConfigPath == "" {
+		kubeConfigPath = os.Getenv("KUBECONFIG")
+	}
+	kubeConfigPaths := os.Getenv("KUBE_CONFIG_PATHS")
+	kubeConfigContext := os.Getenv("KUBE_CTX")
+	kubeConfigContextAuthInfo := os.Getenv("KUBE_CTX_AUTH_INFO")
+	kubeConfigContextCluster := os.Getenv("KUBE_CTX_CLUSTER")
+	kubeToken := os.Getenv("KUBE_TOKEN")
+	kubeProxy := os.Getenv("KUBE_PROXY_URL")
+	applyRetryCountStr := os.Getenv("KUBECTL_PROVIDER_APPLY_RETRY_COUNT")
+	loadConfigFileStr := os.Getenv("KUBE_LOAD_CONFIG_FILE")
 
+	var config util.ConfigData
 	diags := req.Config.Get(ctx, &config)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Apply environment variable defaults following the precedence pattern:
-	// configuration value > environment variable > default value
+	// Override env-var defaults with explicit config values (like Helm).
+	// Using !IsNull() (not IsUnknown) — unknown values yield "" which
+	// is the same as the env-var default, so they are harmless.
+	if !config.Host.IsNull() {
+		kubeHost = config.Host.ValueString()
+	}
+	if !config.Username.IsNull() {
+		kubeUser = config.Username.ValueString()
+	}
+	if !config.Password.IsNull() {
+		kubePassword = config.Password.ValueString()
+	}
+	if !config.Insecure.IsNull() {
+		kubeInsecureStr = strconv.FormatBool(config.Insecure.ValueBool())
+	}
+	if !config.TLSServerName.IsNull() {
+		kubeTLSServerName = config.TLSServerName.ValueString()
+	}
+	if !config.ClientCertificate.IsNull() {
+		kubeClientCert = config.ClientCertificate.ValueString()
+	}
+	if !config.ClientKey.IsNull() {
+		kubeClientKey = config.ClientKey.ValueString()
+	}
+	if !config.ClusterCACertificate.IsNull() {
+		kubeCACert = config.ClusterCACertificate.ValueString()
+	}
+	if !config.ConfigPath.IsNull() {
+		kubeConfigPath = config.ConfigPath.ValueString()
+	}
+	if !config.ConfigContext.IsNull() {
+		kubeConfigContext = config.ConfigContext.ValueString()
+	}
+	if !config.ConfigContextAuthInfo.IsNull() {
+		kubeConfigContextAuthInfo = config.ConfigContextAuthInfo.ValueString()
+	}
+	if !config.ConfigContextCluster.IsNull() {
+		kubeConfigContextCluster = config.ConfigContextCluster.ValueString()
+	}
+	if !config.Token.IsNull() {
+		kubeToken = config.Token.ValueString()
+	}
+	if !config.ProxyURL.IsNull() {
+		kubeProxy = config.ProxyURL.ValueString()
+	}
+	if !config.LoadConfigFile.IsNull() {
+		loadConfigFileStr = strconv.FormatBool(config.LoadConfigFile.ValueBool())
+	}
 
-	// Handle apply_retry_count
+	// Resolve apply_retry_count
 	applyRetryCount := int64(1)
-	if !config.ApplyRetryCount.IsNull() && !config.ApplyRetryCount.IsUnknown() {
-		applyRetryCount = config.ApplyRetryCount.ValueInt64()
-	} else if envValue := os.Getenv("KUBECTL_PROVIDER_APPLY_RETRY_COUNT"); envValue != "" {
-		if parsed, err := strconv.ParseInt(envValue, 10, 64); err == nil {
+	if applyRetryCountStr != "" {
+		if parsed, err := strconv.ParseInt(applyRetryCountStr, 10, 64); err == nil {
 			applyRetryCount = parsed
 		}
 	}
+	if !config.ApplyRetryCount.IsNull() {
+		applyRetryCount = config.ApplyRetryCount.ValueInt64()
+	}
 
-	// Handle host
-	if config.Host.IsNull() || config.Host.IsUnknown() {
-		if envValue := os.Getenv("KUBE_HOST"); envValue != "" {
-			config.Host = types.StringValue(envValue)
+	// Resolve insecure and load_config_file booleans
+	var kubeInsecure bool
+	if kubeInsecureStr != "" {
+		if parsed, err := strconv.ParseBool(kubeInsecureStr); err == nil {
+			kubeInsecure = parsed
+		}
+	}
+	loadConfigFile := true
+	if loadConfigFileStr != "" {
+		if parsed, err := strconv.ParseBool(loadConfigFileStr); err == nil {
+			loadConfigFile = parsed
 		}
 	}
 
-	// Handle username
-	if config.Username.IsNull() || config.Username.IsUnknown() {
-		if envValue := os.Getenv("KUBE_USER"); envValue != "" {
-			config.Username = types.StringValue(envValue)
-		}
+	// Resolve config_paths list
+	var kubeConfigPathsList []string
+	if kubeConfigPaths != "" {
+		kubeConfigPathsList = append(kubeConfigPathsList, filepath.SplitList(kubeConfigPaths)...)
+	}
+	if !config.ConfigPaths.IsNull() {
+		var paths []string
+		diags = config.ConfigPaths.ElementsAs(ctx, &paths, false)
+		resp.Diagnostics.Append(diags...)
+		kubeConfigPathsList = append(kubeConfigPathsList, paths...)
 	}
 
-	// Handle password
-	if config.Password.IsNull() || config.Password.IsUnknown() {
-		if envValue := os.Getenv("KUBE_PASSWORD"); envValue != "" {
-			config.Password = types.StringValue(envValue)
-		}
-	}
-
-	// Handle insecure
-	if config.Insecure.IsNull() || config.Insecure.IsUnknown() {
-		if envValue := os.Getenv("KUBE_INSECURE"); envValue != "" {
-			if parsed, err := strconv.ParseBool(envValue); err == nil {
-				config.Insecure = types.BoolValue(parsed)
-			}
-		} else {
-			config.Insecure = types.BoolValue(false)
-		}
-	}
-
-	// Handle client_certificate
-	if config.ClientCertificate.IsNull() || config.ClientCertificate.IsUnknown() {
-		if envValue := os.Getenv("KUBE_CLIENT_CERT_DATA"); envValue != "" {
-			config.ClientCertificate = types.StringValue(envValue)
-		}
-	}
-
-	// Handle client_key
-	if config.ClientKey.IsNull() || config.ClientKey.IsUnknown() {
-		if envValue := os.Getenv("KUBE_CLIENT_KEY_DATA"); envValue != "" {
-			config.ClientKey = types.StringValue(envValue)
-		}
-	}
-
-	// Handle cluster_ca_certificate
-	if config.ClusterCACertificate.IsNull() || config.ClusterCACertificate.IsUnknown() {
-		if envValue := os.Getenv("KUBE_CLUSTER_CA_CERT_DATA"); envValue != "" {
-			config.ClusterCACertificate = types.StringValue(envValue)
-		}
-	}
-
-	// Handle config_path with multiple environment variable options
-	if config.ConfigPath.IsNull() || config.ConfigPath.IsUnknown() {
-		configPath := ""
-		for _, envVar := range []string{"KUBE_CONFIG", "KUBECONFIG", "KUBE_CONFIG_PATH"} {
-			if envValue := os.Getenv(envVar); envValue != "" {
-				configPath = envValue
-				break
-			}
-		}
-		if configPath == "" {
-			configPath = "~/.kube/config"
-		}
-		config.ConfigPath = types.StringValue(configPath)
-	}
-
-	// Handle config_context
-	if config.ConfigContext.IsNull() || config.ConfigContext.IsUnknown() {
-		if envValue := os.Getenv("KUBE_CTX"); envValue != "" {
-			config.ConfigContext = types.StringValue(envValue)
-		}
-	}
-
-	// Handle config_context_auth_info
-	if config.ConfigContextAuthInfo.IsNull() || config.ConfigContextAuthInfo.IsUnknown() {
-		if envValue := os.Getenv("KUBE_CTX_AUTH_INFO"); envValue != "" {
-			config.ConfigContextAuthInfo = types.StringValue(envValue)
-		}
-	}
-
-	// Handle config_context_cluster
-	if config.ConfigContextCluster.IsNull() || config.ConfigContextCluster.IsUnknown() {
-		if envValue := os.Getenv("KUBE_CTX_CLUSTER"); envValue != "" {
-			config.ConfigContextCluster = types.StringValue(envValue)
-		}
-	}
-
-	// Handle token
-	if config.Token.IsNull() || config.Token.IsUnknown() {
-		if envValue := os.Getenv("KUBE_TOKEN"); envValue != "" {
-			config.Token = types.StringValue(envValue)
-		}
-	}
-
-	// Handle proxy_url
-	if config.ProxyURL.IsNull() || config.ProxyURL.IsUnknown() {
-		if envValue := os.Getenv("KUBE_PROXY_URL"); envValue != "" {
-			config.ProxyURL = types.StringValue(envValue)
-		}
-	}
-
-	// Handle load_config_file
-	if config.LoadConfigFile.IsNull() || config.LoadConfigFile.IsUnknown() {
-		if envValue := os.Getenv("KUBE_LOAD_CONFIG_FILE"); envValue != "" {
-			if parsed, err := strconv.ParseBool(envValue); err == nil {
-				config.LoadConfigFile = types.BoolValue(parsed)
-			}
-		} else {
-			config.LoadConfigFile = types.BoolValue(true)
-		}
-	}
-
-	// Handle tls_server_name
-	if config.TLSServerName.IsNull() || config.TLSServerName.IsUnknown() {
-		if envValue := os.Getenv("KUBE_TLS_SERVER_NAME"); envValue != "" {
-			config.TLSServerName = types.StringValue(envValue)
-		}
-	}
-
-	clientConfig, err := util.InitializeConfiguration(ctx, config)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Kubernetes Client",
-			fmt.Sprintf("Failed to initialize Kubernetes configuration: %s", err),
-		)
-		return
+	// Build the resolved ConfigData with plain Go values (like Helm's
+	// kubernetesConfigObjectValue). Unknown values have already been
+	// resolved to "" / false through the env-var overlay above.
+	resolvedConfig := util.ConfigData{
+		Host:                  types.StringValue(kubeHost),
+		Username:              types.StringValue(kubeUser),
+		Password:              types.StringValue(kubePassword),
+		Insecure:              types.BoolValue(kubeInsecure),
+		TLSServerName:         types.StringValue(kubeTLSServerName),
+		ClientCertificate:     types.StringValue(kubeClientCert),
+		ClientKey:             types.StringValue(kubeClientKey),
+		ClusterCACertificate:  types.StringValue(kubeCACert),
+		ConfigPath:            types.StringValue(kubeConfigPath),
+		ConfigPaths:           util.StringListToFramework(ctx, kubeConfigPathsList),
+		ConfigContext:         types.StringValue(kubeConfigContext),
+		ConfigContextAuthInfo: types.StringValue(kubeConfigContextAuthInfo),
+		ConfigContextCluster:  types.StringValue(kubeConfigContextCluster),
+		Token:                 types.StringValue(kubeToken),
+		ProxyURL:              types.StringValue(kubeProxy),
+		LoadConfigFile:        types.BoolValue(loadConfigFile),
+		Exec:                  config.Exec,
 	}
 
 	// Create provider data structure — clients are initialized lazily on first use
 	providerData := &kubectlProviderData{
-		ClientConfig:     clientConfig,
+		configData:       resolvedConfig,
+		configFullyKnown: req.Config.Raw.IsFullyKnown(),
 		ApplyRetryCount:  applyRetryCount,
 		terraformVersion: req.TerraformVersion,
 		logger:           hclog.Default(),

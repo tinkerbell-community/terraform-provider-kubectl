@@ -60,7 +60,7 @@ func InitializeConfiguration(
 
 	// Handle config_path
 	var configPaths []string
-	if !config.ConfigPath.IsNull() && !config.ConfigPath.IsUnknown() {
+	if !config.ConfigPath.IsNull() && config.ConfigPath.ValueString() != "" {
 		configPaths = []string{config.ConfigPath.ValueString()}
 	} else if !config.ConfigPaths.IsNull() && !config.ConfigPaths.IsUnknown() {
 		// Handle config_paths
@@ -131,16 +131,16 @@ func InitializeConfiguration(
 		}
 
 		// Handle context overrides
-		if !config.ConfigContext.IsNull() && !config.ConfigContext.IsUnknown() {
+		if !config.ConfigContext.IsNull() && config.ConfigContext.ValueString() != "" {
 			overrides.CurrentContext = config.ConfigContext.ValueString()
 		}
 
-		if !config.ConfigContextAuthInfo.IsNull() && !config.ConfigContextAuthInfo.IsUnknown() {
+		if !config.ConfigContextAuthInfo.IsNull() && config.ConfigContextAuthInfo.ValueString() != "" {
 			overrides.Context = clientcmdapi.Context{}
 			overrides.Context.AuthInfo = config.ConfigContextAuthInfo.ValueString()
 		}
 
-		if !config.ConfigContextCluster.IsNull() && !config.ConfigContextCluster.IsUnknown() {
+		if !config.ConfigContextCluster.IsNull() && config.ConfigContextCluster.ValueString() != "" {
 			if overrides.Context.AuthInfo == "" {
 				overrides.Context = clientcmdapi.Context{}
 			}
@@ -153,17 +153,17 @@ func InitializeConfiguration(
 		overrides.ClusterInfo.InsecureSkipTLSVerify = config.Insecure.ValueBool()
 	}
 
-	if !config.ClusterCACertificate.IsNull() && !config.ClusterCACertificate.IsUnknown() {
+	if !config.ClusterCACertificate.IsNull() && config.ClusterCACertificate.ValueString() != "" {
 		overrides.ClusterInfo.CertificateAuthorityData = bytes.NewBufferString(config.ClusterCACertificate.ValueString()).
 			Bytes()
 	}
 
-	if !config.ClientCertificate.IsNull() && !config.ClientCertificate.IsUnknown() {
+	if !config.ClientCertificate.IsNull() && config.ClientCertificate.ValueString() != "" {
 		overrides.AuthInfo.ClientCertificateData = bytes.NewBufferString(config.ClientCertificate.ValueString()).
 			Bytes()
 	}
 
-	if !config.Host.IsNull() && !config.Host.IsUnknown() {
+	if !config.Host.IsNull() && config.Host.ValueString() != "" {
 		hasCA := len(overrides.ClusterInfo.CertificateAuthorityData) != 0
 		hasCert := len(overrides.AuthInfo.ClientCertificateData) != 0
 		defaultTLS := hasCA || hasCert || overrides.ClusterInfo.InsecureSkipTLSVerify
@@ -180,28 +180,28 @@ func InitializeConfiguration(
 		overrides.ClusterInfo.Server = host.String()
 	}
 
-	if !config.Username.IsNull() && !config.Username.IsUnknown() {
+	if !config.Username.IsNull() && config.Username.ValueString() != "" {
 		overrides.AuthInfo.Username = config.Username.ValueString()
 	}
 
-	if !config.Password.IsNull() && !config.Password.IsUnknown() {
+	if !config.Password.IsNull() && config.Password.ValueString() != "" {
 		overrides.AuthInfo.Password = config.Password.ValueString()
 	}
 
-	if !config.ClientKey.IsNull() && !config.ClientKey.IsUnknown() {
+	if !config.ClientKey.IsNull() && config.ClientKey.ValueString() != "" {
 		overrides.AuthInfo.ClientKeyData = bytes.NewBufferString(config.ClientKey.ValueString()).
 			Bytes()
 	}
 
-	if !config.Token.IsNull() && !config.Token.IsUnknown() {
+	if !config.Token.IsNull() && config.Token.ValueString() != "" {
 		overrides.AuthInfo.Token = config.Token.ValueString()
 	}
 
-	if !config.ProxyURL.IsNull() && !config.ProxyURL.IsUnknown() {
+	if !config.ProxyURL.IsNull() && config.ProxyURL.ValueString() != "" {
 		overrides.ClusterDefaults.ProxyURL = config.ProxyURL.ValueString()
 	}
 
-	if !config.TLSServerName.IsNull() && !config.TLSServerName.IsUnknown() {
+	if !config.TLSServerName.IsNull() && config.TLSServerName.ValueString() != "" {
 		overrides.ClusterInfo.TLSServerName = config.TLSServerName.ValueString()
 	}
 

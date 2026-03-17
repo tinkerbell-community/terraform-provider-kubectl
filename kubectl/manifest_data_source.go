@@ -125,6 +125,21 @@ func (d *manifestDataSource) Read(
 		return
 	}
 
+	// When the provider configuration is not fully known (e.g. host comes from
+	// a resource that hasn't been created yet), we cannot reach the Kubernetes
+	// API. Set a deferral if the client supports it; otherwise set a null
+	// object so the plan can proceed without errors.
+	if !d.providerData.configFullyKnown {
+		if req.ClientCapabilities.DeferralAllowed {
+			resp.Deferred = &datasource.Deferred{
+				Reason: datasource.DeferredReasonProviderConfigUnknown,
+			}
+		}
+		model.Object = types.DynamicNull()
+		resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
+		return
+	}
+
 	apiVersion := model.APIVersion.ValueString()
 	kind := model.Kind.ValueString()
 	name := model.Name.ValueString()
