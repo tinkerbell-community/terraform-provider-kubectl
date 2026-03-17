@@ -1488,15 +1488,24 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 				_, isComputed := computedFields[ap.String()]
 
 				if v.IsKnown() {
+					// Computed fields: always carry forward the server value
+					// from the prior object. The purpose of marking a field as
+					// computed is to let the API server own it — remote changes
+					// must never trigger an update diff.
+					if isComputed {
+						nowVal, restPath, walkErr := tftypes.WalkAttributePath(priorObj, ap)
+						if walkErr == nil && len(restPath.Steps()) == 0 {
+							return nowVal.(tftypes.Value), nil
+						}
+						// Not in prior object — keep config value as-is
+						return v, nil
+					}
+
 					// This is a value from current configuration — include it in the plan
 					hasChanged := false
 
 					// Check if value changed between prior and proposed manifest
-					wasCfg, restPath, walkErr := tftypes.WalkAttributePath(priorMan, ap)
-					if walkErr != nil && len(restPath.Steps()) != 0 {
-						// New field not in prior config
-						hasChanged = true
-					}
+					wasCfg, _, _ := tftypes.WalkAttributePath(priorMan, ap)
 					if nowCfg, restPath, walkErr := tftypes.WalkAttributePath(
 						ppMan,
 						ap,
@@ -1518,17 +1527,6 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 						}
 					}
 
-					if isComputed {
-						if hasChanged {
-							// Computed field changed — mark unknown for API to fill
-							return tftypes.NewValue(v.Type(), tftypes.UnknownValue), nil
-						}
-						// Computed field not changed — carry forward from prior object
-						nowVal, restPath, walkErr := tftypes.WalkAttributePath(priorObj, ap)
-						if walkErr == nil && len(restPath.Steps()) == 0 {
-							return nowVal.(tftypes.Value), nil
-						}
-					}
 					return v, nil
 				}
 

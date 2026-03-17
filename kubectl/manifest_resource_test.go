@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 func TestAccResourceKubectlManifest_basic(t *testing.T) {
@@ -1045,6 +1046,324 @@ func TestAccResourceKubectlManifest_computedFieldsCustom(t *testing.T) {
 			},
 		},
 	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldsRemoteChange verifies that
+// when a computed field is modified externally (by another controller / kubectl patch),
+// the provider does NOT trigger an update on the next apply.
+func TestAccResourceKubectlManifest_computedFieldsRemoteChange(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-remote")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create with data.key1 = "original" and mark data.key1 as computed
+				Config: testAccManifestComputedFieldRemoteChange(name, "original"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.key1", "original"),
+				),
+			},
+			{
+				// Step 2: Externally patch data.key1 to "remote-modified", then re-apply
+				// the same config. Since data.key1 is computed, no update should be triggered.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"data":{"key1":"remote-modified"}}`)
+					_, err := integrationK8sClient.Resource(cmGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch configmap: %v", err)
+					}
+				},
+				Config: testAccManifestComputedFieldRemoteChange(name, "original"),
+				// PlanOnly verifies that no diff is detected — the plan should be empty.
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldsRemoteChangeApply verifies that
+// a computed field changed remotely doesn't trigger an update even across full
+// apply cycles (not just plan-only).
+func TestAccResourceKubectlManifest_computedFieldsRemoteChangeApply(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-remote-apply")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Create
+				Config: testAccManifestComputedFieldRemoteChange(name, "initial"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+				),
+			},
+			{
+				// Patch externally, then re-apply same config
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"data":{"key1":"externally-patched"}}`)
+					_, err := integrationK8sClient.Resource(cmGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch configmap: %v", err)
+					}
+				},
+				Config: testAccManifestComputedFieldRemoteChange(name, "initial"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					// The K8s value should remain "externally-patched" — the provider
+					// should not have overwritten it.
+					testAccCheckK8sField(cmGVR, "default", name, "data.key1", "externally-patched"),
+				),
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldNestedRemoteChange verifies that
+// a nested computed field path (e.g. "spec.replicas") is ignored when changed remotely.
+func TestAccResourceKubectlManifest_computedFieldNestedRemoteChange(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-nested")
+	resourceName := "kubectl_manifest.test"
+	deployGVR := k8sschema.GroupVersionResource{
+		Group:    "apps",
+		Version:  "v1",
+		Resource: "deployments",
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Create deployment with replicas=1, mark spec.replicas as computed
+				Config: testAccManifestComputedFieldDeployment(name, 1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+				),
+			},
+			{
+				// Externally scale to 3, then re-apply same config with replicas=1
+				// Since spec.replicas is computed, no update should occur; replicas stays at 3.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"spec":{"replicas":3}}`)
+					_, err := integrationK8sClient.Resource(deployGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch deployment: %v", err)
+					}
+				},
+				Config:   testAccManifestComputedFieldDeployment(name, 1),
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldNonComputedStillUpdates verifies
+// that non-computed fields still trigger updates while computed fields are ignored.
+func TestAccResourceKubectlManifest_computedFieldNonComputedStillUpdates(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-mixed")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Create with key1 (computed) and key2 (non-computed)
+				Config: testAccManifestComputedFieldMixed(name, "val1", "val2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.key1", "val1"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.key2", "val2"),
+				),
+			},
+			{
+				// Change key2 (non-computed) — should trigger an update for key2.
+				// key1 is computed and should not cause a diff.
+				Config: testAccManifestComputedFieldMixed(name, "val1", "val2-updated"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.key2", "val2-updated"),
+				),
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldMultiple verifies multiple
+// computed fields are all ignored when changed remotely.
+func TestAccResourceKubectlManifest_computedFieldMultiple(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-multi")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccManifestComputedFieldMultiple(name),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+				),
+			},
+			{
+				// Patch both computed fields remotely
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"data":{"key1":"remote1","key2":"remote2"}}`)
+					_, err := integrationK8sClient.Resource(cmGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch configmap: %v", err)
+					}
+				},
+				Config:   testAccManifestComputedFieldMultiple(name),
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// --- computed_fields config helpers ---
+
+func testAccManifestComputedFieldRemoteChange(name, value string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = %q
+      namespace = "default"
+    }
+    data = {
+      key1 = %q
+    }
+  }
+
+  fields = {
+    computed = ["data.key1"]
+  }
+}
+`, name, value)
+}
+
+func testAccManifestComputedFieldDeployment(name string, replicas int) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+    metadata = {
+      name      = %q
+      namespace = "default"
+    }
+    spec = {
+      replicas = %d
+      selector = {
+        matchLabels = {
+          app = %q
+        }
+      }
+      template = {
+        metadata = {
+          labels = {
+            app = %q
+          }
+        }
+        spec = {
+          containers = [
+            {
+              name  = "nginx"
+              image = "nginx:latest"
+            }
+          ]
+        }
+      }
+    }
+  }
+
+  fields = {
+    computed = ["spec.replicas"]
+  }
+}
+`, name, replicas, name, name)
+}
+
+func testAccManifestComputedFieldMixed(name, val1, val2 string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = %q
+      namespace = "default"
+    }
+    data = {
+      key1 = %q
+      key2 = %q
+    }
+  }
+
+  fields = {
+    computed = ["data.key1"]
+  }
+}
+`, name, val1, val2)
+}
+
+func testAccManifestComputedFieldMultiple(name string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = %q
+      namespace = "default"
+    }
+    data = {
+      key1 = "orig1"
+      key2 = "orig2"
+      key3 = "orig3"
+    }
+  }
+
+  fields = {
+    computed = ["data.key1", "data.key2"]
+  }
+}
+`, name)
 }
 
 // --- field_manager Tests ---
