@@ -611,3 +611,60 @@ func TestDynamicMapComparisonRobustness(t *testing.T) {
 		t.Errorf("dynamicToMap results differ (-obj +map):\n%s", diff)
 	}
 }
+
+// TestDecodeAnyPreservingType_ScalarHints verifies that scalar type hints are
+// respected: a string value "1" is converted to NumberValue when the hint is
+// NumberValue (IntOrString handling).
+func TestDecodeAnyPreservingType_ScalarHints(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		val  any
+		hint attr.Value
+		want attr.Value
+	}{
+		{
+			name: "string to number via hint",
+			val:  "1",
+			hint: types.NumberValue(big.NewFloat(1)),
+			want: types.NumberValue(big.NewFloat(1)),
+		},
+		{
+			name: "string percentage stays string (unparseable as number)",
+			val:  "80%",
+			hint: types.NumberValue(big.NewFloat(80)),
+			want: types.StringValue("80%"),
+		},
+		{
+			name: "string stays string with string hint",
+			val:  "hello",
+			hint: types.StringValue("hello"),
+			want: types.StringValue("hello"),
+		},
+		{
+			name: "number stays number with nil hint",
+			val:  float64(42),
+			hint: nil,
+			want: types.NumberValue(big.NewFloat(42)),
+		},
+		{
+			name: "string to large number via hint",
+			val:  "8080",
+			hint: types.NumberValue(big.NewFloat(623)),
+			want: types.NumberValue(big.NewFloat(8080)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, diags := decodeAnyPreservingType(ctx, tt.val, tt.hint)
+			if diags.HasError() {
+				t.Fatalf("unexpected error: %v", diags)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}

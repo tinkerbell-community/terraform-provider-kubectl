@@ -4,6 +4,7 @@
 package kubectl
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -227,5 +228,77 @@ func TestComputeManifestWoChecksum_changesWithInput(t *testing.T) {
 
 	if c1 == c2 {
 		t.Errorf("expected different checksums for different inputs, got %s", c1)
+	}
+}
+
+func TestGetNestedMapValue(t *testing.T) {
+	m := map[string]any{
+		"spec": map[string]any{
+			"userData": "cloud-init-data",
+			"connection": map[string]any{
+				"host": "10.0.0.1",
+				"port": float64(623),
+			},
+		},
+		"metadata": map[string]any{
+			"name": "test",
+		},
+	}
+
+	tests := []struct {
+		name   string
+		path   []string
+		want   any
+		wantOK bool
+	}{
+		{"top-level", []string{"metadata"}, map[string]any{"name": "test"}, true},
+		{"nested string", []string{"spec", "userData"}, "cloud-init-data", true},
+		{"deep nested", []string{"spec", "connection", "port"}, float64(623), true},
+		{"missing key", []string{"spec", "missing"}, nil, false},
+		{"missing intermediate", []string{"spec", "missing", "deep"}, nil, false},
+		{"empty path", []string{}, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := getNestedMapValue(m, tt.path)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetNestedMapValue(t *testing.T) {
+	m := map[string]any{
+		"spec": map[string]any{
+			"userData": "",
+			"connection": map[string]any{
+				"port": float64(623),
+			},
+		},
+	}
+
+	setNestedMapValue(m, []string{"spec", "userData"}, "cloud-init")
+	got, ok := getNestedMapValue(m, []string{"spec", "userData"})
+	if !ok || got != "cloud-init" {
+		t.Errorf("expected cloud-init, got %v (ok=%v)", got, ok)
+	}
+
+	setNestedMapValue(m, []string{"spec", "connection", "port"}, float64(8080))
+	got, ok = getNestedMapValue(m, []string{"spec", "connection", "port"})
+	if !ok || got != float64(8080) {
+		t.Errorf("expected 8080, got %v (ok=%v)", got, ok)
+	}
+
+	// Setting a missing path should be a no-op
+	if before, ok := m["spec"].(map[string]any)["userData"]; ok {
+		setNestedMapValue(m, []string{"spec", "nonexistent", "key"}, "val")
+		after, ok := m["spec"].(map[string]any)["userData"]
+		if !ok || before != after {
+			t.Errorf("setting missing path should be no-op")
+		}
 	}
 }

@@ -405,3 +405,135 @@ func deleteDeployment(t *testing.T, name, namespace string) {
 		t.Logf("Warning: failed to delete deployment %s: %v", name, err)
 	}
 }
+
+// TestIntegration_Patch_RevertRequiredField verifies that destroying a patch
+// resource that patched a required CRD field restores the original value
+// instead of deleting the field (which would violate the schema).
+func TestIntegration_Patch_RevertRequiredField(t *testing.T) {
+	t.Parallel()
+
+	crdName := "patchapps.patch-test.io"
+	crName := testAccRandomName("patch-rv")
+	crGVR := k8sschema.GroupVersionResource{
+		Group:    "patch-test.io",
+		Version:  "v1",
+		Resource: "patchapps",
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create CRD + CR + patch (replicas 2 → 5)
+				Config: patchRevertRequiredFieldConfig(crdName, crName, 5),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.crd", "id"),
+					resource.TestCheckResourceAttrSet("kubectl_manifest.cr", "id"),
+					resource.TestCheckResourceAttrSet("kubectl_patch.scale", "id"),
+					testAccCheckK8sField(crGVR, "default", crName, "spec.replicas", "5"),
+				),
+			},
+			{
+				// Step 2: Remove the patch resource. The destroy should
+				// restore spec.replicas to 2 (the pre-patch value) instead
+				// of deleting it (which would fail validation).
+				Config: patchRevertRequiredFieldBaseConfig(crdName, crName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.cr", "id"),
+					testAccCheckK8sField(crGVR, "default", crName, "spec.replicas", "2"),
+				),
+			},
+		},
+	})
+}
+
+// patchRevertRequiredFieldConfig creates a CRD with spec.replicas as required,
+// a CR with replicas=2, and a patch that changes replicas to the given value.
+func patchRevertRequiredFieldConfig(crdName, crName string, replicas int) string {
+	return patchRevertRequiredFieldBaseConfig(crdName, crName) + fmt.Sprintf(`
+resource "kubectl_patch" "scale" {
+  api_version = "patch-test.io/v1"
+  kind        = "PatchApp"
+  name        = %[1]q
+  namespace   = "default"
+
+  patch = {
+    spec = {
+      replicas = %[2]d
+    }
+  }
+
+  field_manager {
+    name            = "TerraformPatcher"
+    force_conflicts = true
+  }
+
+  depends_on = [kubectl_manifest.cr]
+}
+`, crName, replicas)
+}
+
+// patchRevertRequiredFieldBaseConfig creates the CRD and CR without the patch.
+func patchRevertRequiredFieldBaseConfig(crdName, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = %[1]q
+    }
+    spec = {
+      group = "patch-test.io"
+      names = {
+        kind     = "PatchApp"
+        plural   = "patchapps"
+        singular = "patchapp"
+      }
+      scope = "Namespaced"
+      versions = [{
+        name    = "v1"
+        served  = true
+        storage = true
+        schema = {
+          openAPIV3Schema = {
+            type = "object"
+            properties = {
+              spec = {
+                type     = "object"
+                required = ["image", "replicas"]
+                properties = {
+                  image    = { type = "string" }
+                  replicas = { type = "integer" }
+                }
+              }
+            }
+          }
+        }
+      }]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+  manifest = {
+    apiVersion = "patch-test.io/v1"
+    kind       = "PatchApp"
+    metadata = {
+      name      = %[2]q
+      namespace = "default"
+    }
+    spec = {
+      image    = "nginx:latest"
+      replicas = 2
+    }
+  }
+
+  fields = {
+    computed = ["spec.replicas"]
+  }
+}
+`, crdName, crName)
+}

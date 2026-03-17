@@ -216,12 +216,20 @@ func (r *patchResource) Create(
 	createCtx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
 
-	if err := r.applyPatch(createCtx, &plan); err != nil {
+	prePatchValues, err := r.applyPatch(createCtx, &plan)
+	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Apply Patch",
 			fmt.Sprintf("Could not apply patch: %s", err),
 		)
 		return
+	}
+
+	// Store pre-patch values so Delete can restore originals instead of nullifying.
+	if prePatchValues != nil {
+		if ppJSON, err := json.Marshal(prePatchValues); err == nil {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "pre_patch_values", ppJSON)...)
+		}
 	}
 
 	diags = resp.State.Set(ctx, plan)
@@ -280,12 +288,20 @@ func (r *patchResource) Update(
 	updateCtx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
-	if err := r.applyPatch(updateCtx, &plan); err != nil {
+	prePatchValues, err := r.applyPatch(updateCtx, &plan)
+	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Update Patch",
 			fmt.Sprintf("Could not apply updated patch: %s", err),
 		)
 		return
+	}
+
+	// Store pre-patch values so Delete can restore originals instead of nullifying.
+	if prePatchValues != nil {
+		if ppJSON, err := json.Marshal(prePatchValues); err == nil {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "pre_patch_values", ppJSON)...)
+		}
 	}
 
 	diags = resp.State.Set(ctx, plan)
@@ -315,7 +331,13 @@ func (r *patchResource) Delete(
 	deleteCtx, cancel := context.WithTimeout(ctx, deleteTimeout)
 	defer cancel()
 
-	if err := r.revertPatch(deleteCtx, &state); err != nil {
+	// Retrieve pre-patch values stored during Create/Update.
+	var prePatchValues map[string]any
+	if ppJSON, d := req.Private.GetKey(ctx, "pre_patch_values"); !d.HasError() && len(ppJSON) > 0 {
+		_ = json.Unmarshal(ppJSON, &prePatchValues)
+	}
+
+	if err := r.revertPatch(deleteCtx, &state, prePatchValues); err != nil {
 		if isNotFoundError(err) {
 			log.Printf("[DEBUG] Target resource already deleted, nothing to revert")
 			return
@@ -475,21 +497,24 @@ func (r *patchResource) getRestClient(
 	return restClient, nil
 }
 
-// applyPatch applies the patch to the target resource.
+// applyPatch applies the patch to the target resource and returns the
+// pre-patch values of scalar fields touched by the patch. These values are
+// needed later to properly revert the patch (restore originals rather than
+// deleting required fields).
 // Array fields are merged with the existing resource (unique-append) rather than replaced,
 // so multiple independent patches managing different items in the same array coexist safely.
 func (r *patchResource) applyPatch(
 	ctx context.Context,
 	model *patchResourceModel,
-) error {
+) (map[string]any, error) {
 	fieldManagerName, _, diags := r.getFieldManagerConfig(ctx, model)
 	if diags.HasError() {
-		return fmt.Errorf("failed to get field manager config: %v", diags)
+		return nil, fmt.Errorf("failed to get field manager config: %v", diags)
 	}
 
 	restClient, err := r.getRestClient(ctx, model)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Fetch the current resource so we can merge array fields rather than replace them.
@@ -499,13 +524,18 @@ func (r *patchResource) applyPatch(
 		meta_v1.GetOptions{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to get current resource for array merge: %w", err)
+		return nil, fmt.Errorf("failed to get current resource for array merge: %w", err)
 	}
 
 	uo, d := r.buildPatchUnstructured(ctx, model)
 	if d.HasError() {
-		return fmt.Errorf("failed to build patch payload: %v", d)
+		return nil, fmt.Errorf("failed to build patch payload: %v", d)
 	}
+
+	// Capture pre-patch values of fields we're about to overwrite. These are
+	// needed when reverting the patch on Delete to restore originals instead
+	// of nullifying (which would fail for required CRD fields).
+	prePatchValues := extractPrePatchValues(current.Object, uo.Object)
 
 	// Merge array fields in the patch with their live counterparts so we append
 	// rather than overwrite. Scalar and map fields pass through unchanged.
@@ -518,7 +548,7 @@ func (r *patchResource) applyPatch(
 	// Marshal to JSON for the merge patch
 	jsonData, err := uo.MarshalJSON()
 	if err != nil {
-		return fmt.Errorf("failed to marshal patch to JSON: %w", err)
+		return nil, fmt.Errorf("failed to marshal patch to JSON: %w", err)
 	}
 
 	// Apply using Merge Patch (RFC 7396) — only the specified fields are changed;
@@ -535,7 +565,7 @@ func (r *patchResource) applyPatch(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to apply patch: %w", err)
+		return nil, fmt.Errorf("failed to apply patch: %w", err)
 	}
 
 	log.Printf("[DEBUG] Successfully applied patch to: %s/%s (UID: %s)",
@@ -545,7 +575,7 @@ func (r *patchResource) applyPatch(
 	r.setID(model)
 
 	// Set object from result
-	return r.setObjectFromResult(ctx, result, model)
+	return prePatchValues, r.setObjectFromResult(ctx, result, model)
 }
 
 // readPatchedResource reads the target resource from Kubernetes.
@@ -571,11 +601,15 @@ func (r *patchResource) readPatchedResource(
 }
 
 // revertPatch reverts the patch by applying an inverse merge patch.
-// Scalar fields are nullified (deleted). Array fields have the patch items removed
-// from the live resource's array, leaving any items added by other managers intact.
+// Scalar fields that existed before the patch are restored to their pre-patch
+// values (instead of being deleted via nil, which would fail for required CRD
+// fields). Scalar fields that were added by the patch are deleted. Array fields
+// have the patch items removed from the live resource's array, leaving any
+// items added by other managers intact.
 func (r *patchResource) revertPatch(
 	ctx context.Context,
 	model *patchResourceModel,
+	prePatchValues map[string]any,
 ) error {
 	fieldManagerName, _, diags := r.getFieldManagerConfig(ctx, model)
 	if diags.HasError() {
@@ -603,8 +637,8 @@ func (r *patchResource) revertPatch(
 		return fmt.Errorf("failed to get current resource for revert: %w", err)
 	}
 
-	// Build the inverse payload: scalars → null, arrays → current minus our items.
-	payload := buildRevertPayload(current.Object, patchMap)
+	// Build the inverse payload: scalars → pre-patch value or nil, arrays → current minus our items.
+	payload := buildRevertPayload(current.Object, patchMap, prePatchValues)
 	if payload == nil {
 		payload = make(map[string]any)
 	}
@@ -676,28 +710,77 @@ func mergeArraysWithCurrent(current, patch map[string]any) map[string]any {
 	return result
 }
 
+// extractPrePatchValues captures the current values of scalar and array fields
+// that a patch is about to overwrite. Map fields are recursed. Fields that
+// don't exist in current are omitted (they were added by the patch, so revert
+// should delete them).
+func extractPrePatchValues(current, patch map[string]any) map[string]any {
+	result := make(map[string]any)
+	for k, patchVal := range patch {
+		currentVal, exists := current[k]
+		if !exists {
+			continue
+		}
+		switch patchVal.(type) {
+		case map[string]any:
+			if cv, ok := currentVal.(map[string]any); ok {
+				if pv, ok := patchVal.(map[string]any); ok {
+					sub := extractPrePatchValues(cv, pv)
+					if len(sub) > 0 {
+						result[k] = sub
+					}
+				}
+			}
+		default:
+			result[k] = currentVal
+		}
+	}
+	return result
+}
+
 // buildRevertPayload builds the inverse of a patch against the current live object:
-//   - Scalar fields → nil (causes the key to be deleted via merge patch)
+//   - Scalar fields → pre-patch value (restore original) or nil (delete if added by patch)
 //   - Array fields → current array with patch items removed
 //   - Map fields → recursed
-func buildRevertPayload(current, patch map[string]any) map[string]any {
+//
+// When prePatch is nil (legacy state created before pre-patch tracking was added),
+// scalar fields are omitted from the revert payload so they retain their current
+// value. This avoids deleting required CRD fields.
+func buildRevertPayload(current, patch, prePatch map[string]any) map[string]any {
 	result := make(map[string]any, len(patch))
 	for k, patchVal := range patch {
 		switch pv := patchVal.(type) {
 		case map[string]any:
 			if cv, ok := current[k].(map[string]any); ok {
-				result[k] = buildRevertPayload(cv, pv)
-			} else {
+				var pp map[string]any
+				if prePatch != nil {
+					pp, _ = prePatch[k].(map[string]any)
+				}
+				sub := buildRevertPayload(cv, pv, pp)
+				if len(sub) > 0 {
+					result[k] = sub
+				}
+			} else if prePatch != nil {
 				result[k] = nil
 			}
 		case []any:
 			if cv, ok := current[k].([]any); ok {
 				result[k] = removeFromSlice(cv, pv)
-			} else {
+			} else if prePatch != nil {
 				result[k] = nil
 			}
 		default:
-			result[k] = nil
+			if prePatch != nil {
+				if preVal, ok := prePatch[k]; ok {
+					// Restore the pre-patch value (field existed before we patched it).
+					result[k] = preVal
+				} else {
+					// Field not in pre-patch state = added by the patch. Safe to delete.
+					result[k] = nil
+				}
+			}
+			// If prePatch is nil (legacy state), omit the field so it retains
+			// its current value — avoids deleting required CRD fields.
 		}
 	}
 	return result

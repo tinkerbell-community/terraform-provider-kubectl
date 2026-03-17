@@ -635,7 +635,123 @@ func TestAccResourceKubectlManifest_immutableFieldsMissing(t *testing.T) {
 	})
 }
 
+// TestAccResourceKubectlManifest_immutableFieldRemoteChangeNoReplace verifies
+// that when an immutable field is changed EXTERNALLY (e.g., by a controller or
+// kubectl patch), the provider does NOT trigger replacement. Only user config
+// changes to immutable fields should cause RequiresReplace.
+func TestAccResourceKubectlManifest_immutableFieldRemoteChangeNoReplace(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-immut-remote")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	config := testAccManifestImmutableFieldRemoteChange(name, "original-value")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create with data.frozen = "original-value"
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.frozen", "original-value"),
+				),
+			},
+			{
+				// Step 2: Externally change data.frozen, then full apply.
+				// Since the USER didn't change their config, no replacement should occur.
+				// The server value should be preserved.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"data":{"frozen":"externally-changed"}}`)
+					_, err := integrationK8sClient.Resource(cmGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch configmap: %v", err)
+					}
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					// The server value should still be "externally-changed" — the
+					// provider should NOT have recreated the resource with "original-value".
+					testAccCheckK8sField(
+						cmGVR,
+						"default",
+						name,
+						"data.frozen",
+						"externally-changed",
+					),
+				),
+			},
+			{
+				// Step 3: PlanOnly — confirm no diff at all
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_immutableFieldConfigChangeTriggerReplace
+// verifies that when the USER changes an immutable field in their config,
+// RequiresReplace is correctly triggered even after an external change.
+func TestAccResourceKubectlManifest_immutableFieldConfigChangeTriggerReplace(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-immut-cfg")
+	resourceName := "kubectl_manifest.test"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create with data.frozen = "v1"
+				Config: testAccManifestImmutableFieldRemoteChange(name, "v1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+				),
+			},
+			{
+				// Step 2: Change config to data.frozen = "v2". This is a user-initiated
+				// immutable field change and should trigger replacement.
+				Config: testAccManifestImmutableFieldRemoteChange(name, "v2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+				),
+			},
+		},
+	})
+}
+
 // --- immutable_fields config helpers ---
+
+func testAccManifestImmutableFieldRemoteChange(name, frozenValue string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = %q
+      namespace = "default"
+    }
+    data = {
+      key1   = "non-immutable"
+      frozen = %q
+    }
+  }
+
+  fields = {
+    immutable = ["data.frozen"]
+  }
+}
+`, name, frozenValue)
+}
 
 func testAccResourceKubectlManifest_immutableField(name, value, frozen string) string {
 	return fmt.Sprintf(`
@@ -1254,6 +1370,589 @@ func TestAccResourceKubectlManifest_computedFieldMultiple(t *testing.T) {
 }
 
 // --- computed_fields config helpers ---
+
+// TestAccResourceKubectlManifest_computedFieldFireAndForget is the definitive
+// "fire and forget" test. It:
+//  1. Creates a resource with a computed field set to a config value
+//  2. Externally patches the computed field to a different value
+//  3. Full apply — must NOT overwrite the remote value
+//  4. Full apply again — still no changes
+//  5. PlanOnly — confirms no diff at all
+//
+// This validates the complete lifecycle: computed fields are sent on create but
+// thereafter the server owns the value completely.
+func TestAccResourceKubectlManifest_computedFieldFireAndForget(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-faf")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	config := testAccManifestComputedFieldRemoteChange(name, "initial-value")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create with data.key1 = "initial-value"
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.key1", "initial-value"),
+				),
+			},
+			{
+				// Step 2: Remotely change data.key1 → "controller-set-value", then full apply.
+				// Since data.key1 is computed, the provider must NOT overwrite it.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"data":{"key1":"controller-set-value"}}`)
+					_, err := integrationK8sClient.Resource(cmGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch configmap: %v", err)
+					}
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					// Remote value must be preserved — provider must not overwrite
+					testAccCheckK8sField(
+						cmGVR,
+						"default",
+						name,
+						"data.key1",
+						"controller-set-value",
+					),
+				),
+			},
+			{
+				// Step 3: Apply again (no remote change) — must still be no-op
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckK8sField(
+						cmGVR,
+						"default",
+						name,
+						"data.key1",
+						"controller-set-value",
+					),
+				),
+			},
+			{
+				// Step 4: PlanOnly — confirm no diff at all
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldFireAndForgetCRD is the same
+// fire-and-forget test but for a CRD with integer fields and a status subresource.
+func TestAccResourceKubectlManifest_computedFieldFireAndForgetCRD(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("faf%s.example.com", suffix)
+	crName := fmt.Sprintf("test-faf-%s", suffix)
+	crdResourceName := "kubectl_manifest.crd"
+	crResourceName := "kubectl_manifest.cr"
+	crGVR := k8sschema.GroupVersionResource{
+		Group:    crdGroup,
+		Version:  "v1alpha1",
+		Resource: "machines",
+	}
+	config := testAccManifestFireAndForgetCRD(crdGroup, crName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create CRD and instance with spec.connection.port = 623
+				// and mark spec.connection.port as computed.
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(crdResourceName, "id"),
+					resource.TestCheckResourceAttrSet(crResourceName, "id"),
+				),
+			},
+			{
+				// Step 2: Externally change port to 8080, then full apply.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"spec":{"connection":{"port":8080}}}`)
+					_, err := integrationK8sClient.Resource(crGVR).
+						Namespace("default").
+						Patch(ctx, crName, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch CR: %v", err)
+					}
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(crResourceName, "id"),
+				),
+			},
+			{
+				// Step 3: PlanOnly — no diff
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldEmptyToServerSet verifies the
+// specific scenario where a computed field is configured as empty string in HCL,
+// a controller/webhook sets it to a meaningful value, and the provider must NOT
+// overwrite it with empty string on subsequent applies.
+func TestAccResourceKubectlManifest_computedFieldEmptyToServerSet(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-cf-empty")
+	resourceName := "kubectl_manifest.test"
+	cmGVR := k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	config := testAccManifestComputedFieldRemoteChange(name, "")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create with data.key1 = "" (empty string)
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					testAccCheckK8sField(cmGVR, "default", name, "data.key1", ""),
+				),
+			},
+			{
+				// Step 2: Externally set data.key1 to cloud-init-like data.
+				// Since data.key1 is computed, the provider must NOT overwrite
+				// it with empty string.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"data":{"key1":"#cloud-config\nusers:\n  - name: admin\n"}}`)
+					_, err := integrationK8sClient.Resource(cmGVR).
+						Namespace("default").
+						Patch(ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch configmap: %v", err)
+					}
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					// Server value must be preserved — NOT overwritten with ""
+					testAccCheckK8sField(
+						cmGVR,
+						"default",
+						name,
+						"data.key1",
+						"#cloud-config\nusers:\n  - name: admin\n",
+					),
+				),
+			},
+			{
+				// Step 3: Same config — plan should be empty
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_computedFieldCRDUserData is a CRD test
+// modelling the tinkerbell.org/v1alpha1.Hardware scenario where spec.userData
+// is set to empty string in config and a controller fills it with cloud-init data.
+func TestAccResourceKubectlManifest_computedFieldCRDUserData(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("ud%s.example.com", suffix)
+	crName := fmt.Sprintf("test-ud-%s", suffix)
+	crResourceName := "kubectl_manifest.cr"
+	crGVR := k8sschema.GroupVersionResource{
+		Group:    crdGroup,
+		Version:  "v1alpha1",
+		Resource: "hardwares",
+	}
+	config := testAccManifestCRDUserData(crdGroup, crName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create CRD and instance with spec.userData = ""
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(crResourceName, "id"),
+				),
+			},
+			{
+				// Step 2: Externally set spec.userData to cloud-init data.
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(
+						`{"spec":{"userData":"#cloud-config\nusers:\n  - name: admin\n"}}`,
+					)
+					_, err := integrationK8sClient.Resource(crGVR).
+						Namespace("default").
+						Patch(ctx, crName, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch CR: %v", err)
+					}
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(crResourceName, "id"),
+					testAccCheckK8sField(
+						crGVR,
+						"default",
+						crName,
+						"spec.userData",
+						"#cloud-config\nusers:\n  - name: admin\n",
+					),
+				),
+			},
+			{
+				// Step 3: Same config — plan should be empty
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccManifestCRDUserData(crdGroup, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "hardwares.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "Hardware"
+        listKind = "HardwareList"
+        plural   = "hardwares"
+        singular = "hardware"
+      }
+      scope = "Namespaced"
+      versions = [
+        {
+          name    = "v1alpha1"
+          served  = true
+          storage = true
+          schema = {
+            openAPIV3Schema = {
+              type = "object"
+              properties = {
+                spec = {
+                  type = "object"
+                  properties = {
+                    hostname = {
+                      type = "string"
+                    }
+                    userData = {
+                      type    = "string"
+                      default = ""
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1alpha1"
+    kind       = "Hardware"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      hostname = "worker-1"
+      userData = ""
+    }
+  }
+
+  fields = {
+    computed = ["spec.userData"]
+  }
+}
+`, crdGroup, crName)
+}
+
+// TestAccResourceKubectlManifest_computedFieldRemoveNonComputedField verifies
+// that removing a non-computed field from config while a computed field has a
+// different server value does NOT cause "Provider produced invalid plan."
+// Scenario: CRD has spec.replicas (computed) and spec.rolloutStrategy (optional).
+// Step 1: Create with rolloutStrategy present and replicas=2, externally change replicas to 5.
+// Step 2: Remove rolloutStrategy from config — plan must succeed.
+func TestAccResourceKubectlManifest_computedFieldRemoveNonComputedField(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("rmf%s.example.com", suffix)
+	crName := fmt.Sprintf("test-rmf-%s", suffix)
+	crResourceName := "kubectl_manifest.cr"
+	crGVR := k8sschema.GroupVersionResource{
+		Group:    crdGroup,
+		Version:  "v1",
+		Resource: "myapps",
+	}
+
+	configWithField := testAccManifestComputedRemoveField(crdGroup, crName, true)
+	configWithoutField := testAccManifestComputedRemoveField(crdGroup, crName, false)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				// Step 1: Create with rolloutStrategy present, replicas=2.
+				Config: configWithField,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(crResourceName, "id"),
+				),
+			},
+			{
+				// Step 2: Externally change replicas to 5, then remove
+				// rolloutStrategy from config. The plan must not produce
+				// "Provider produced invalid plan."
+				PreConfig: func() {
+					ctx := context.Background()
+					patch := []byte(`{"spec":{"replicas":5}}`)
+					_, err := integrationK8sClient.Resource(crGVR).
+						Namespace("default").
+						Patch(ctx, crName, k8stypes.MergePatchType, patch, metav1.PatchOptions{})
+					if err != nil {
+						t.Fatalf("failed to patch CR: %v", err)
+					}
+				},
+				Config: configWithoutField,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(crResourceName, "id"),
+				),
+			},
+			{
+				// Step 3: PlanOnly — no diff
+				Config:   configWithoutField,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// testAccManifestComputedRemoveField returns config for testing removal of a
+// non-computed field while a computed field has a server-set value.
+func testAccManifestComputedRemoveField(crdGroup, crName string, includeRollout bool) string {
+	rolloutBlock := ""
+	if includeRollout {
+		rolloutBlock = `
+      rolloutStrategy = {
+        type          = "RollingUpdate"
+        rollingUpdate = { maxSurge = 1 }
+      }`
+	}
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "myapps.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "MyApp"
+        plural   = "myapps"
+        singular = "myapp"
+      }
+      scope = "Namespaced"
+      versions = [{
+        name    = "v1"
+        served  = true
+        storage = true
+        schema = {
+          openAPIV3Schema = {
+            type = "object"
+            properties = {
+              spec = {
+                type     = "object"
+                required = ["image", "replicas"]
+                properties = {
+                  image    = { type = "string" }
+                  replicas = { type = "integer" }
+                  rolloutStrategy = {
+                    type = "object"
+                    properties = {
+                      type = { type = "string" }
+                      rollingUpdate = {
+                        type = "object"
+                        properties = {
+                          maxSurge = { type = "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1"
+    kind       = "MyApp"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      image    = "nginx:latest"
+      replicas = 2%[3]s
+    }
+  }
+
+  fields = {
+    computed = ["spec.replicas"]
+  }
+
+  field_manager = {
+    force_conflicts = true
+  }
+}
+`, crdGroup, crName, rolloutBlock)
+}
+
+func testAccManifestFireAndForgetCRD(crdGroup, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "machines.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "Machine"
+        listKind = "MachineList"
+        plural   = "machines"
+        singular = "machine"
+      }
+      scope = "Namespaced"
+      versions = [
+        {
+          name    = "v1alpha1"
+          served  = true
+          storage = true
+          subresources = {
+            status = {}
+          }
+          schema = {
+            openAPIV3Schema = {
+              type = "object"
+              properties = {
+                spec = {
+                  type = "object"
+                  properties = {
+                    connection = {
+                      type = "object"
+                      properties = {
+                        host = {
+                          type = "string"
+                        }
+                        port = {
+                          type    = "integer"
+                          default = 623
+                        }
+                        authSecretRef = {
+                          type = "object"
+                          properties = {
+                            name = {
+                              type = "string"
+                            }
+                            namespace = {
+                              type = "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                status = {
+                  type = "object"
+                  properties = {
+                    ready = {
+                      type = "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1alpha1"
+    kind       = "Machine"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      connection = {
+        host = "10.0.0.1"
+        port = 623
+        authSecretRef = {
+          name      = "bmc-auth"
+          namespace = "default"
+        }
+      }
+    }
+  }
+
+  fields = {
+    computed = ["spec.connection.port"]
+  }
+}
+`, crdGroup, crName)
+}
 
 func testAccManifestComputedFieldRemoteChange(name, value string) string {
 	return fmt.Sprintf(`

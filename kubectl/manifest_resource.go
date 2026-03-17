@@ -775,6 +775,15 @@ func (r *manifestResource) Read(
 	// perpetual diffs from server-generated fields (uid, creationTimestamp, etc.)
 	state.Manifest = reconcileDynamicWithPrior(ctx, priorManifest, state.Manifest)
 
+	// For immutable fields, restore the prior config value (from before Read)
+	// instead of keeping the API server's current value. This ensures that
+	// ModifyPlan's immutable check compares the user's current config against
+	// their PRIOR config — not against the server value. Without this,
+	// external changes to immutable fields (e.g., a controller scaling
+	// replicas) would cause a false RequiresReplace because the plan value
+	// (from config) differs from the state value (from server).
+	preserveImmutableFieldsFromPrior(ctx, &state, priorManifest)
+
 	// Check error conditions from the error block. If any error condition
 	// matches the live resource state, mark the resource for replacement on
 	// the next plan via a private state flag.
@@ -1288,6 +1297,14 @@ func (r *manifestResource) ModifyPlan(
 		}
 	}
 
+	// Reconcile computed fields at the map level. This is a fallback that
+	// works regardless of whether OpenAPI type resolution succeeded. When
+	// modifyPlanWithOpenAPI returned early (CRD not yet in discovery cache,
+	// non-structural type, priorObj conversion failure, etc.), plan.Manifest
+	// still has raw config values for computed fields. Replacing them with
+	// state values prevents false diffs and payload overwrites.
+	reconcileComputedFieldsInPlan(ctx, &plan, &state)
+
 	// Determine if user-provided manifest changed between plan and state.
 	// Compare at the map[string]any level so that container-type differences
 	// (ObjectValue vs MapValue, TupleValue vs ListValue) don't cause false
@@ -1340,6 +1357,205 @@ func (r *manifestResource) ModifyPlan(
 
 	diags = resp.Plan.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
+}
+
+// reconcileComputedFieldsInPlan replaces computed field values in the plan
+// manifest with values from the state manifest. The state carries server
+// values (via reconcileDynamicWithPrior), so this effectively makes computed
+// fields "fire and forget." This is a map-level fallback that works
+// regardless of whether modifyPlanWithOpenAPI succeeded.
+//
+// Immutable fields are NOT reconciled here — they are handled differently.
+// preserveImmutableFieldsFromPrior (called in Read) keeps prior config
+// values in state, so plan == state naturally when the user hasn't changed
+// their config. Reconciling immutable fields here would overwrite user
+// config changes and cause Terraform to reject the plan.
+//
+// The operation is idempotent: if modifyPlanWithOpenAPI already replaced the
+// values, plan and state already match and nothing changes.
+func reconcileComputedFieldsInPlan(
+	ctx context.Context,
+	plan *manifestResourceModel,
+	state *manifestResourceModel,
+) {
+	// Only applies on Update — on Create there is no prior state.
+	if state.Manifest.IsNull() || state.Manifest.IsUnknown() {
+		return
+	}
+
+	// Parse computed field paths from fields config.
+	var computedPaths [][]string
+	if !plan.Fields.IsNull() && !plan.Fields.IsUnknown() {
+		var fm fieldsModel
+		if d := plan.Fields.As(ctx, &fm, basetypes.ObjectAsOptions{}); !d.HasError() {
+			if !fm.Computed.IsNull() && !fm.Computed.IsUnknown() {
+				var cfList []string
+				fm.Computed.ElementsAs(ctx, &cfList, false)
+				for _, cf := range cfList {
+					computedPaths = append(computedPaths, strings.Split(cf, "."))
+				}
+			}
+		}
+	}
+	// Apply default computed fields when none specified.
+	if len(computedPaths) == 0 {
+		computedPaths = [][]string{
+			{"metadata", "annotations"},
+			{"metadata", "labels"},
+		}
+	}
+
+	planMap, planDiags := dynamicToMap(ctx, plan.Manifest)
+	if planDiags.HasError() || planMap == nil {
+		return
+	}
+	stateMap, stateDiags := dynamicToMap(ctx, state.Manifest)
+	if stateDiags.HasError() || stateMap == nil {
+		return
+	}
+
+	modified := false
+	for _, p := range computedPaths {
+		stateVal, ok := getNestedMapValue(stateMap, p)
+		if !ok {
+			continue
+		}
+		planVal, ok := getNestedMapValue(planMap, p)
+		if !ok {
+			continue
+		}
+		if !reflect.DeepEqual(planVal, stateVal) {
+			setNestedMapValue(planMap, p, stateVal)
+			modified = true
+		}
+	}
+
+	if !modified {
+		return
+	}
+
+	// Only apply the reconciliation if it makes the plan match state entirely.
+	// If non-computed fields also differ (e.g., user added/changed other
+	// attributes in the same cycle), applying the reconciliation would create
+	// a hybrid plan that matches neither config nor prior, causing Terraform
+	// to reject it with "Provider produced invalid plan."
+	if !reflect.DeepEqual(planMap, stateMap) {
+		return
+	}
+
+	dyn, d := mapToDynamicPreservingTypes(ctx, planMap, plan.Manifest)
+	if !d.HasError() {
+		plan.Manifest = dyn
+	}
+}
+
+// preserveImmutableFieldsFromPrior restores prior config values for immutable
+// fields in state.Manifest after reconcileDynamicWithPrior has replaced them
+// with API server values. This ensures ModifyPlan's immutable check compares
+// the user's CURRENT config against their PRIOR config — not against the
+// server value — so external changes to immutable fields don't cause a false
+// RequiresReplace.
+func preserveImmutableFieldsFromPrior(
+	ctx context.Context,
+	state *manifestResourceModel,
+	priorManifest types.Dynamic,
+) {
+	if state.Fields.IsNull() || state.Fields.IsUnknown() {
+		return
+	}
+	if priorManifest.IsNull() || priorManifest.IsUnknown() {
+		return
+	}
+
+	var fm fieldsModel
+	if d := state.Fields.As(ctx, &fm, basetypes.ObjectAsOptions{}); d.HasError() {
+		return
+	}
+	if fm.Immutable.IsNull() || fm.Immutable.IsUnknown() {
+		return
+	}
+
+	var immutablePaths []string
+	fm.Immutable.ElementsAs(ctx, &immutablePaths, false)
+	if len(immutablePaths) == 0 {
+		return
+	}
+
+	priorMap, d := dynamicToMap(ctx, priorManifest)
+	if d.HasError() || priorMap == nil {
+		return
+	}
+	stateMap, d := dynamicToMap(ctx, state.Manifest)
+	if d.HasError() || stateMap == nil {
+		return
+	}
+
+	modified := false
+	for _, fp := range immutablePaths {
+		parts := strings.Split(fp, ".")
+		priorVal, ok := getNestedMapValue(priorMap, parts)
+		if !ok {
+			continue
+		}
+		stateVal, ok := getNestedMapValue(stateMap, parts)
+		if !ok {
+			continue
+		}
+		if !reflect.DeepEqual(priorVal, stateVal) {
+			setNestedMapValue(stateMap, parts, priorVal)
+			modified = true
+		}
+	}
+
+	if !modified {
+		return
+	}
+
+	dyn, d := mapToDynamicPreservingTypes(ctx, stateMap, state.Manifest)
+	if !d.HasError() {
+		state.Manifest = dyn
+	}
+}
+
+// getNestedMapValue retrieves a value from a nested map following the given
+// path segments (e.g. ["spec", "userData"]).
+func getNestedMapValue(m map[string]any, path []string) (any, bool) {
+	if len(path) == 0 {
+		return nil, false
+	}
+	current := any(m)
+	for i, key := range path {
+		cm, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		val, exists := cm[key]
+		if !exists {
+			return nil, false
+		}
+		if i == len(path)-1 {
+			return val, true
+		}
+		current = val
+	}
+	return nil, false
+}
+
+// setNestedMapValue sets a value in a nested map at the given path.
+func setNestedMapValue(m map[string]any, path []string, value any) {
+	current := m
+	for _, key := range path[:len(path)-1] {
+		next, ok := current[key]
+		if !ok {
+			return
+		}
+		nextMap, ok := next.(map[string]any)
+		if !ok {
+			return
+		}
+		current = nextMap
+	}
+	current[path[len(path)-1]] = value
 }
 
 // modifyPlanWithOpenAPI uses OpenAPI spec to resolve the resource type and
@@ -1626,6 +1842,20 @@ func (r *manifestResource) modifyPlanWithOpenAPI(
 	// Fields the user didn't configure (annotations, labels, server-injected fields)
 	// are available via the `object` computed attribute on the resource.
 	filteredContent := deepReconcileMaps(proposedManifestMap, resultContent)
+
+	// Guard: when the result differs from config, verify it matches prior
+	// state. Carrying forward computed server values while adding or removing
+	// non-computed fields creates a hybrid plan matching neither config nor
+	// state — which Terraform rejects with "Provider produced invalid plan."
+	// In that case, skip the modification entirely and let the plan stay as
+	// config. The reconcileComputedFieldsInPlan fallback (which has its own
+	// guard) will also skip, so the plan safely equals config.
+	if !reflect.DeepEqual(filteredContent, proposedManifestMap) {
+		stateManifestMap, _ := dynamicToMap(ctx, state.Manifest)
+		if stateManifestMap == nil || !reflect.DeepEqual(filteredContent, stateManifestMap) {
+			return
+		}
+	}
 
 	// Update plan manifest from reconciled (compact) result, preserving the
 	// original config types (Map vs Object, List vs Tuple) so the planned

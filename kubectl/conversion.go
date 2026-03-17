@@ -263,6 +263,10 @@ func mapToDynamicPreservingTypes(
 
 // decodeAnyPreservingType converts a Go value to attr.Value, using hint to
 // choose Map vs Object and List vs Tuple container types.
+// For scalar values, it also preserves the hint's type when the Go value can
+// be losslessly converted: e.g., a string "1" is converted to NumberValue(1)
+// when the hint is a NumberValue. This handles IntOrString fields where the
+// OpenAPI pipeline converts integers to strings.
 func decodeAnyPreservingType(
 	ctx context.Context,
 	val any,
@@ -275,6 +279,17 @@ func decodeAnyPreservingType(
 		return decodeMappingPreservingType(ctx, v, hint)
 	case []any:
 		return decodeSequencePreservingType(ctx, v, hint)
+	case string:
+		// When the hint is a NumberValue, the OpenAPI pipeline may have
+		// converted an integer to a string (IntOrString fields). Convert
+		// back to NumberValue so the state type matches the config type.
+		if _, ok := hint.(basetypes.NumberValue); ok {
+			bf, _, err := big.ParseFloat(v, 10, 256, big.ToNearestEven)
+			if err == nil {
+				return types.NumberValue(bf), nil
+			}
+		}
+		return decodeAny(ctx, val)
 	default:
 		return decodeAny(ctx, val)
 	}
