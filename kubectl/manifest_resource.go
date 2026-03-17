@@ -3,16 +3,12 @@ package kubectl
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"reflect"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -2772,114 +2768,4 @@ func (e *MatchingConditionError) Error() string {
 
 func isNotFoundError(err error) bool {
 	return api.IsNotFoundError(err)
-}
-
-// extractManifestWoFromConfig reads the manifest_wo attribute from config
-// (write-only attributes must be read from config, not plan/state).
-func extractManifestWoFromConfig(
-	ctx context.Context,
-	config tfsdk.Config,
-	diagnostics *diag.Diagnostics,
-) types.Dynamic {
-	var manifestWo types.Dynamic
-	d := config.GetAttribute(ctx, path.Root("manifest_wo"), &manifestWo)
-	diagnostics.Append(d...)
-	return manifestWo
-}
-
-// computeManifestWoChecksum produces a deterministic SHA-256 hex digest of
-// manifest_wo so that changes to write-only values can be detected across plan cycles.
-func computeManifestWoChecksum(m map[string]any) string {
-	data, err := json.Marshal(m)
-	if err != nil {
-		return ""
-	}
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
-}
-
-// extractLeafPaths collects all leaf (non-map) key paths from a nested map
-// using dot-separated notation. Used to determine which paths from manifest_wo
-// should be masked in the object attribute.
-func extractLeafPaths(m map[string]any, prefix string) []string {
-	var paths []string
-	for k, v := range m {
-		fullPath := k
-		if prefix != "" {
-			fullPath = prefix + "." + k
-		}
-		if subMap, ok := v.(map[string]any); ok {
-			paths = append(paths, extractLeafPaths(subMap, fullPath)...)
-		} else {
-			paths = append(paths, fullPath)
-		}
-	}
-	sort.Strings(paths)
-	return paths
-}
-
-// deepMergeMaps recursively merges overlay into base in-place.
-// For map values, it recurses; for all other types, overlay values replace base values.
-func deepMergeMaps(base, overlay map[string]any) {
-	for k, v := range overlay {
-		if subOverlay, ok := v.(map[string]any); ok {
-			if subBase, ok := base[k].(map[string]any); ok {
-				deepMergeMaps(subBase, subOverlay)
-				continue
-			}
-		}
-		base[k] = v
-	}
-}
-
-// maskFieldsWoPaths removes write-only field paths from model.Object to prevent
-// sensitive values from being stored in Terraform state.
-func maskFieldsWoPaths(ctx context.Context, model *manifestResourceModel, keys []string) error {
-	if model.Object.IsNull() || model.Object.IsUnknown() {
-		return nil
-	}
-	objMap, d := dynamicToMap(ctx, model.Object)
-	if d.HasError() {
-		return fmt.Errorf("failed to convert object to map for WO masking: %v", d)
-	}
-	if objMap == nil {
-		return nil
-	}
-	for _, key := range keys {
-		woDeleteAtPath(objMap, strings.Split(key, "."))
-	}
-	maskedDynamic, d := mapToDynamic(ctx, objMap)
-	if d.HasError() {
-		return fmt.Errorf("failed to convert masked object back to dynamic: %v", d)
-	}
-	model.Object = maskedDynamic
-	return nil
-}
-
-// woDeleteAtPath removes the leaf key at the given path parts from the nested structure.
-// Silently skips missing paths.
-func woDeleteAtPath(node any, parts []string) {
-	if len(parts) == 0 || node == nil {
-		return
-	}
-	if len(parts) == 1 {
-		if n, ok := node.(map[string]any); ok {
-			delete(n, parts[0])
-		}
-		return
-	}
-	switch n := node.(type) {
-	case map[string]any:
-		child, exists := n[parts[0]]
-		if !exists {
-			return
-		}
-		woDeleteAtPath(child, parts[1:])
-	case []any:
-		idx, err := strconv.Atoi(parts[0])
-		if err != nil || idx < 0 || idx >= len(n) {
-			return
-		}
-		woDeleteAtPath(n[idx], parts[1:])
-	}
 }
