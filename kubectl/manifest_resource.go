@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1288,12 +1289,20 @@ func (r *manifestResource) ModifyPlan(
 	}
 
 	// Determine if user-provided manifest changed between plan and state.
-	// Compare plan.Manifest AFTER OpenAPI morphing so both plan and state are in
-	// the same full-schema shape. Comparing the pre-morph (compact) user plan to
-	// the post-morph state would always differ even when nothing actually changed.
-	// If something changed, status/object must be Unknown (provider will produce new values).
-	// If nothing changed, preserve state values to prevent perpetual diffs.
-	hasChange := !plan.Manifest.Equal(state.Manifest)
+	// Compare at the map[string]any level so that container-type differences
+	// (ObjectValue vs MapValue, TupleValue vs ListValue) don't cause false
+	// positives. types.Dynamic.Equal is type-sensitive — two Dynamics with
+	// identical content but different container wrappers are not Equal.
+	// dynamicToMap normalizes both sides to plain Go types, making the
+	// comparison purely semantic.
+	planMap, planDiags := dynamicToMap(ctx, plan.Manifest)
+	stateMap, stateDiags := dynamicToMap(ctx, state.Manifest)
+	var hasChange bool
+	if planDiags.HasError() || stateDiags.HasError() {
+		hasChange = true // cannot compare — assume changed
+	} else {
+		hasChange = !reflect.DeepEqual(planMap, stateMap)
+	}
 
 	// Detect manifest_wo value changes via checksum comparison. Write-only values
 	// are absent from plan/state, so we hash config values and compare with the

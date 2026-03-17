@@ -2323,6 +2323,583 @@ func testAccCheckK8sField(
 	}
 }
 
+// TestAccResourceKubectlManifest_noChurnConfigMap verifies that re-applying
+// the exact same ConfigMap config produces an empty plan (no churn).
+func TestAccResourceKubectlManifest_noChurnConfigMap(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-nochurn-cm")
+	config := testAccManifestNoChurnConfigMap(name)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.test", "id"),
+				),
+			},
+			{
+				// Re-apply same config — plan must be empty (no churn).
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccManifestNoChurnConfigMap(name string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = "%s"
+      namespace = "default"
+    }
+    data = {
+      key1 = "value1"
+      key2 = "value2"
+    }
+  }
+}
+`, name)
+}
+
+// TestAccResourceKubectlManifest_noChurnCRD verifies that creating a CRD +
+// custom resource instance and then re-planning produces an empty plan.
+func TestAccResourceKubectlManifest_noChurnCRD(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("nochurn%s.example.com", suffix)
+	crName := fmt.Sprintf("test-nochurn-%s", suffix)
+	config := testAccManifestNoChurnCRD(crdGroup, crName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.crd", "id"),
+					resource.TestCheckResourceAttrSet("kubectl_manifest.cr", "id"),
+				),
+			},
+			{
+				// Re-apply same config — plan must be empty (no churn).
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccManifestNoChurnCRD(crdGroup, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "gadgets.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "Gadget"
+        listKind = "GadgetList"
+        plural   = "gadgets"
+        singular = "gadget"
+      }
+      scope = "Namespaced"
+      versions = [
+        {
+          name    = "v1"
+          served  = true
+          storage = true
+          schema = {
+            openAPIV3Schema = {
+              type = "object"
+              properties = {
+                spec = {
+                  type = "object"
+                  properties = {
+                    color = {
+                      type = "string"
+                    }
+                    count = {
+                      type = "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1"
+    kind       = "Gadget"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      color = "red"
+      count = 5
+    }
+  }
+}
+`, crdGroup, crName)
+}
+
+// TestAccResourceKubectlManifest_noChurnCRDWithComputedFields verifies no
+// churn when computed fields are configured on a CRD instance — the
+// plan/status/object must not show "known after apply" on repeated plans.
+func TestAccResourceKubectlManifest_noChurnCRDWithComputedFields(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("nocchurnc%s.example.com", suffix)
+	crName := fmt.Sprintf("test-cf-nochurn-%s", suffix)
+	config := testAccManifestNoChurnCRDWithComputedFields(crdGroup, crName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.crd", "id"),
+					resource.TestCheckResourceAttrSet("kubectl_manifest.cr", "id"),
+				),
+			},
+			{
+				// Re-apply same config — plan must be empty (no churn).
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccManifestNoChurnCRDWithComputedFields(crdGroup, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "machines.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "Machine"
+        listKind = "MachineList"
+        plural   = "machines"
+        singular = "machine"
+      }
+      scope = "Namespaced"
+      versions = [
+        {
+          name    = "v1alpha1"
+          served  = true
+          storage = true
+          subresources = {
+            status = {}
+          }
+          schema = {
+            openAPIV3Schema = {
+              type = "object"
+              properties = {
+                spec = {
+                  type = "object"
+                  properties = {
+                    connection = {
+                      type = "object"
+                      properties = {
+                        host = {
+                          type = "string"
+                        }
+                        port = {
+                          type    = "integer"
+                          default = 623
+                        }
+                        authSecretRef = {
+                          type = "object"
+                          properties = {
+                            name = {
+                              type = "string"
+                            }
+                            namespace = {
+                              type = "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                    firmware = {
+                      type = "string"
+                    }
+                  }
+                }
+                status = {
+                  type = "object"
+                  properties = {
+                    ready = {
+                      type = "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1alpha1"
+    kind       = "Machine"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      connection = {
+        host = "10.0.0.1"
+        port = 623
+        authSecretRef = {
+          name      = "bmc-auth"
+          namespace = "default"
+        }
+      }
+    }
+  }
+
+  fields = {
+    computed = ["spec.firmware"]
+  }
+}
+`, crdGroup, crName)
+}
+
+// TestAccResourceKubectlManifest_noChurnCRDWithStatus verifies no churn for a
+// CRD with a status subresource — status is filled by the server, and the
+// provider must not report it as "known after apply" on subsequent plans.
+func TestAccResourceKubectlManifest_noChurnCRDWithStatus(t *testing.T) {
+	t.Parallel()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	crdGroup := fmt.Sprintf("nochurnst%s.example.com", suffix)
+	crName := fmt.Sprintf("test-nochurn-st-%s", suffix)
+	config := testAccManifestNoChurnCRDWithStatus(crdGroup, crName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.crd", "id"),
+					resource.TestCheckResourceAttrSet("kubectl_manifest.cr", "id"),
+				),
+			},
+			{
+				// Re-apply same config — plan must be empty (no churn).
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccManifestNoChurnCRDWithStatus(crdGroup, crName string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "crd" {
+  manifest = {
+    apiVersion = "apiextensions.k8s.io/v1"
+    kind       = "CustomResourceDefinition"
+    metadata = {
+      name = "machines.%[1]s"
+    }
+    spec = {
+      group = "%[1]s"
+      names = {
+        kind     = "Machine"
+        listKind = "MachineList"
+        plural   = "machines"
+        singular = "machine"
+      }
+      scope = "Namespaced"
+      versions = [
+        {
+          name    = "v1alpha1"
+          served  = true
+          storage = true
+          subresources = {
+            status = {}
+          }
+          schema = {
+            openAPIV3Schema = {
+              type = "object"
+              properties = {
+                spec = {
+                  type = "object"
+                  properties = {
+                    connection = {
+                      type = "object"
+                      properties = {
+                        host = {
+                          type = "string"
+                        }
+                        port = {
+                          type    = "integer"
+                          default = 623
+                        }
+                        authSecretRef = {
+                          type = "object"
+                          properties = {
+                            name = {
+                              type = "string"
+                            }
+                            namespace = {
+                              type = "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                status = {
+                  type = "object"
+                  properties = {
+                    ready = {
+                      type = "boolean"
+                    }
+                    conditions = {
+                      type = "array"
+                      items = {
+                        type = "object"
+                        properties = {
+                          type = {
+                            type = "string"
+                          }
+                          status = {
+                            type = "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "kubectl_manifest" "cr" {
+  depends_on = [kubectl_manifest.crd]
+
+  manifest = {
+    apiVersion = "%[1]s/v1alpha1"
+    kind       = "Machine"
+    metadata = {
+      name      = "%[2]s"
+      namespace = "default"
+    }
+    spec = {
+      connection = {
+        host = "10.0.0.1"
+        port = 623
+        authSecretRef = {
+          name      = "bmc-auth"
+          namespace = "default"
+        }
+      }
+    }
+  }
+}
+`, crdGroup, crName)
+}
+
+// TestAccResourceKubectlManifest_noChurnDeployment verifies no churn for a
+// Deployment resource with nested spec and integer fields.
+func TestAccResourceKubectlManifest_noChurnDeployment(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-nochurn-deploy")
+	config := testAccManifestNoChurnDeployment(name)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("kubectl_manifest.test", "id"),
+				),
+			},
+			{
+				// Re-apply same config — plan must be empty (no churn).
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_noChurnWithAnnotations verifies no churn when
+// the user configures metadata.annotations — since annotations are a default
+// computed field, server-added annotations must not cause churn.
+func TestAccResourceKubectlManifest_noChurnWithAnnotations(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-nochurn-ann")
+	config := fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = "%s"
+      namespace = "default"
+      annotations = {
+        "my-annotation" = "my-value"
+      }
+      labels = {
+        "my-label" = "my-label-value"
+      }
+    }
+    data = {
+      key1 = "value1"
+    }
+  }
+}
+`, name)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check:  resource.TestCheckResourceAttrSet("kubectl_manifest.test", "id"),
+			},
+			{
+				// Re-apply — plan must be empty.
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccResourceKubectlManifest_noChurnMultiCycle verifies no churn across
+// multiple full apply cycles. A resource is applied three times with the same
+// config, and each subsequent plan should be empty.
+func TestAccResourceKubectlManifest_noChurnMultiCycle(t *testing.T) {
+	t.Parallel()
+
+	name := testAccRandomName("test-nochurn-mc")
+	config := testAccManifestNoChurnConfigMap(name)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: integrationProviderCfg,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check:  resource.TestCheckResourceAttrSet("kubectl_manifest.test", "id"),
+			},
+			{
+				// Second apply — should be a no-op
+				Config: config,
+				Check:  resource.TestCheckResourceAttrSet("kubectl_manifest.test", "id"),
+			},
+			{
+				// Third apply — should be a no-op
+				Config: config,
+				Check:  resource.TestCheckResourceAttrSet("kubectl_manifest.test", "id"),
+			},
+			{
+				// Plan only after 3 cycles — must be empty
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccManifestNoChurnDeployment(name string) string {
+	return fmt.Sprintf(`
+resource "kubectl_manifest" "test" {
+  manifest = {
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+    metadata = {
+      name      = "%s"
+      namespace = "default"
+    }
+    spec = {
+      replicas = 1
+      selector = {
+        matchLabels = {
+          app = "%s"
+        }
+      }
+      template = {
+        metadata = {
+          labels = {
+            app = "%s"
+          }
+        }
+        spec = {
+          containers = [
+            {
+              name  = "nginx"
+              image = "nginx:latest"
+              ports = [
+                {
+                  containerPort = 80
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+`, name, name, name)
+}
+
 func splitFieldPath(path string) []string {
 	var parts []string
 	for _, p := range regexp.MustCompile(`\.`).Split(path, -1) {

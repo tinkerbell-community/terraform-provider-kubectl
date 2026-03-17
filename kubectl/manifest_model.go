@@ -193,7 +193,13 @@ func reconcileDynamicWithPrior(
 	// Deep reconcile: keep only attributes from prior, recursing into nested maps
 	result := deepReconcileMaps(priorMap, apiMap)
 
-	dynResult, d := mapToDynamic(ctx, result)
+	// Preserve the container types (Object vs Map, Tuple vs List) from the
+	// prior value so the state's Dynamic matches the plan's Dynamic on
+	// subsequent plan cycles. Without this, mapToDynamic always produces
+	// ObjectValue/TupleValue, which can differ from the plan type when the
+	// HCL config produced MapValue/ListValue, causing spurious hasChange=true
+	// and "(known after apply)" churn on object/status.
+	dynResult, d := mapToDynamicPreservingTypes(ctx, result, prior)
 	if d.HasError() {
 		return prior
 	}

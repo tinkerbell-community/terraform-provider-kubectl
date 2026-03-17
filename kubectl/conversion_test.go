@@ -559,3 +559,55 @@ func TestMapToDynamicPreservingTypes(t *testing.T) {
 		})
 	}
 }
+
+// TestDynamicMapComparisonRobustness demonstrates that comparing Dynamic values
+// at the map[string]any level (via dynamicToMap) is more robust than
+// types.Dynamic.Equal, which is sensitive to container type differences
+// (Object vs Map, Tuple vs List).
+func TestDynamicMapComparisonRobustness(t *testing.T) {
+	ctx := context.Background()
+
+	// Build a Dynamic value using ObjectValue (as mapToDynamic would produce)
+	objDyn := types.DynamicValue(types.ObjectValueMust(
+		map[string]attr.Type{
+			"name": types.StringType,
+			"port": types.NumberType,
+		},
+		map[string]attr.Value{
+			"name": types.StringValue("test"),
+			"port": types.NumberValue(big.NewFloat(623)),
+		},
+	))
+
+	// Build a semantically equivalent Dynamic value using MapValue
+	mapDyn := types.DynamicValue(types.MapValueMust(
+		types.DynamicType,
+		map[string]attr.Value{
+			"name": types.DynamicValue(types.StringValue("test")),
+			"port": types.DynamicValue(types.NumberValue(big.NewFloat(623))),
+		},
+	))
+
+	// types.Dynamic.Equal is type-sensitive — Object != Map
+	if objDyn.Equal(mapDyn) {
+		t.Log("Dynamic.Equal returned true for Object vs Map — no type sensitivity issue")
+	} else {
+		t.Log(
+			"Dynamic.Equal returned false for Object vs Map — map comparison would be more robust",
+		)
+	}
+
+	// Map-level comparison normalizes away container type differences
+	objMap, d := dynamicToMap(ctx, objDyn)
+	if d.HasError() {
+		t.Fatalf("dynamicToMap(objDyn) error: %v", d)
+	}
+	mapMap, d := dynamicToMap(ctx, mapDyn)
+	if d.HasError() {
+		t.Fatalf("dynamicToMap(mapDyn) error: %v", d)
+	}
+
+	if diff := cmp.Diff(objMap, mapMap); diff != "" {
+		t.Errorf("dynamicToMap results differ (-obj +map):\n%s", diff)
+	}
+}
