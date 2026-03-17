@@ -149,21 +149,21 @@ func InitializeConfiguration(
 	}
 
 	// Apply static configuration overrides
-	if !config.Insecure.IsNull() {
+	if !config.Insecure.IsNull() && !config.Insecure.IsUnknown() {
 		overrides.ClusterInfo.InsecureSkipTLSVerify = config.Insecure.ValueBool()
 	}
 
-	if !config.ClusterCACertificate.IsNull() {
+	if !config.ClusterCACertificate.IsNull() && !config.ClusterCACertificate.IsUnknown() {
 		overrides.ClusterInfo.CertificateAuthorityData = bytes.NewBufferString(config.ClusterCACertificate.ValueString()).
 			Bytes()
 	}
 
-	if !config.ClientCertificate.IsNull() {
+	if !config.ClientCertificate.IsNull() && !config.ClientCertificate.IsUnknown() {
 		overrides.AuthInfo.ClientCertificateData = bytes.NewBufferString(config.ClientCertificate.ValueString()).
 			Bytes()
 	}
 
-	if !config.Host.IsNull() {
+	if !config.Host.IsNull() && !config.Host.IsUnknown() {
 		hasCA := len(overrides.ClusterInfo.CertificateAuthorityData) != 0
 		hasCert := len(overrides.AuthInfo.ClientCertificateData) != 0
 		defaultTLS := hasCA || hasCert || overrides.ClusterInfo.InsecureSkipTLSVerify
@@ -180,28 +180,28 @@ func InitializeConfiguration(
 		overrides.ClusterInfo.Server = host.String()
 	}
 
-	if !config.Username.IsNull() {
+	if !config.Username.IsNull() && !config.Username.IsUnknown() {
 		overrides.AuthInfo.Username = config.Username.ValueString()
 	}
 
-	if !config.Password.IsNull() {
+	if !config.Password.IsNull() && !config.Password.IsUnknown() {
 		overrides.AuthInfo.Password = config.Password.ValueString()
 	}
 
-	if !config.ClientKey.IsNull() {
+	if !config.ClientKey.IsNull() && !config.ClientKey.IsUnknown() {
 		overrides.AuthInfo.ClientKeyData = bytes.NewBufferString(config.ClientKey.ValueString()).
 			Bytes()
 	}
 
-	if !config.Token.IsNull() {
+	if !config.Token.IsNull() && !config.Token.IsUnknown() {
 		overrides.AuthInfo.Token = config.Token.ValueString()
 	}
 
-	if !config.ProxyURL.IsNull() {
+	if !config.ProxyURL.IsNull() && !config.ProxyURL.IsUnknown() {
 		overrides.ClusterDefaults.ProxyURL = config.ProxyURL.ValueString()
 	}
 
-	if !config.TLSServerName.IsNull() {
+	if !config.TLSServerName.IsNull() && !config.TLSServerName.IsUnknown() {
 		overrides.ClusterInfo.TLSServerName = config.TLSServerName.ValueString()
 	}
 

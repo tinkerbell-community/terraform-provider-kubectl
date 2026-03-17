@@ -723,6 +723,10 @@ func (r *manifestResource) Read(
 	req resource.ReadRequest,
 	resp *resource.ReadResponse,
 ) {
+	if req.ClientCapabilities.DeferralAllowed {
+		resp.Deferred = &resource.Deferred{}
+	}
+
 	var state manifestResourceModel
 
 	diags := req.State.Get(ctx, &state)
@@ -1952,11 +1956,19 @@ func (r *manifestResource) applyManifest(
 
 	// Create REST client for this resource type
 	manifest := yaml.NewFromUnstructured(uo)
+	mainClientset, err := r.providerData.getMainClientset()
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+	restCfg, err := r.providerData.getRestConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get kubernetes REST config: %w", err)
+	}
 	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
+		mainClientset,
+		restCfg,
 	)
 	if restClient.Error != nil {
 		return fmt.Errorf("failed to create kubernetes rest client: %w", restClient.Error)
@@ -2379,11 +2391,19 @@ func (r *manifestResource) readManifestV2(
 	}
 
 	manifest := yaml.NewFromUnstructured(tempUo)
+	mainClientset, err := r.providerData.getMainClientset()
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+	restCfg, err := r.providerData.getRestConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get kubernetes REST config: %w", err)
+	}
 	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
+		mainClientset,
+		restCfg,
 	)
 	if restClient.Error != nil {
 		return fmt.Errorf("failed to create kubernetes rest client: %w", restClient.Error)
@@ -2645,11 +2665,19 @@ func (r *manifestResource) deleteManifest(
 	}
 
 	manifest := yaml.NewFromUnstructured(uo)
+	mainClientset, err := r.providerData.getMainClientset()
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+	restCfg, err := r.providerData.getRestConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get kubernetes REST config: %w", err)
+	}
 	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
+		mainClientset,
+		restCfg,
 	)
 	if restClient.Error != nil {
 		return fmt.Errorf("failed to create kubernetes rest client: %w", restClient.Error)

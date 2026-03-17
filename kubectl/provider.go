@@ -43,20 +43,57 @@ type kubectlProvider struct {
 
 // kubectlProviderData contains the configured Kubernetes clients and settings.
 type kubectlProviderData struct {
-	ClientConfig        clientcmd.ClientConfig
-	MainClientset       *kubernetes.Clientset
-	RestConfig          *restclient.Config
-	AggregatorClientset *aggregator.Clientset
-	ApplyRetryCount     int64
+	ClientConfig     clientcmd.ClientConfig
+	ApplyRetryCount  int64
+	terraformVersion string
 
-	// Cached clients for OpenAPI-aware operations
-	logger          hclog.Logger
-	dynamicClient   cache[dynamic.Interface]
-	discoveryClient cache[discovery.DiscoveryInterface]
-	restMapper      cache[meta.RESTMapper]
-	restClient      cache[restclient.Interface]
-	OAPIFoundry     cache[api.Foundry]
-	crds            cache[[]unstructured.Unstructured]
+	// Lazily initialized clients
+	logger              hclog.Logger
+	restConfig          cache[*restclient.Config]
+	mainClientset       cache[*kubernetes.Clientset]
+	aggregatorClientset cache[*aggregator.Clientset]
+	dynamicClient       cache[dynamic.Interface]
+	discoveryClient     cache[discovery.DiscoveryInterface]
+	restMapper          cache[meta.RESTMapper]
+	restClient          cache[restclient.Interface]
+	OAPIFoundry         cache[api.Foundry]
+	crds                cache[[]unstructured.Unstructured]
+}
+
+// getRestConfig lazily initializes and returns the Kubernetes REST config.
+func (p *kubectlProviderData) getRestConfig() (*restclient.Config, error) {
+	return p.restConfig.Get(func() (*restclient.Config, error) {
+		cfg, err := p.ClientConfig.ClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load Kubernetes REST config: %w", err)
+		}
+		cfg.QPS = 100.0
+		cfg.Burst = 100
+		cfg.UserAgent = fmt.Sprintf("HashiCorp/1.0 Terraform/%s", p.terraformVersion)
+		return cfg, nil
+	})
+}
+
+// getMainClientset lazily initializes and returns the Kubernetes clientset.
+func (p *kubectlProviderData) getMainClientset() (*kubernetes.Clientset, error) {
+	return p.mainClientset.Get(func() (*kubernetes.Clientset, error) {
+		cfg, err := p.getRestConfig()
+		if err != nil {
+			return nil, err
+		}
+		return kubernetes.NewForConfig(cfg)
+	})
+}
+
+// getAggregatorClientset lazily initializes and returns the aggregator clientset.
+func (p *kubectlProviderData) getAggregatorClientset() (*aggregator.Clientset, error) {
+	return p.aggregatorClientset.Get(func() (*aggregator.Clientset, error) {
+		cfg, err := p.getRestConfig()
+		if err != nil {
+			return nil, err
+		}
+		return aggregator.NewForConfig(cfg)
+	})
 }
 
 // Implement k8sresource.RESTClientGetter interface for kubectlProviderData.
@@ -67,7 +104,7 @@ func (p *kubectlProviderData) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 }
 
 func (p *kubectlProviderData) ToRESTConfig() (*restclient.Config, error) {
-	return p.ToRawKubeConfigLoader().ClientConfig()
+	return p.getRestConfig()
 }
 
 func (p *kubectlProviderData) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, error) {
@@ -253,6 +290,7 @@ func (p *kubectlProvider) Configure(
 		resp.Deferred = &provider.Deferred{
 			Reason: provider.DeferredReasonProviderConfigUnknown,
 		}
+		return
 	}
 
 	var config util.ConfigData
@@ -406,50 +444,12 @@ func (p *kubectlProvider) Configure(
 		return
 	}
 
-	cfg, err := clientConfig.ClientConfig()
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Kubernetes Client",
-			fmt.Sprintf("Failed to load Kubernetes REST config: %s", err),
-		)
-		return
-	}
-
-	// Set QPS and Burst for better performance
-	cfg.QPS = 100.0
-	cfg.Burst = 100
-
-	// Set user agent
-	cfg.UserAgent = fmt.Sprintf("HashiCorp/1.0 Terraform/%s", req.TerraformVersion)
-
-	// Create Kubernetes clientset
-	k8sClient, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Kubernetes Client",
-			fmt.Sprintf("Failed to create Kubernetes clientset: %s", err),
-		)
-		return
-	}
-
-	// Create aggregator clientset
-	aggClient, err := aggregator.NewForConfig(cfg)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Aggregator Client",
-			fmt.Sprintf("Failed to create aggregator clientset: %s", err),
-		)
-		return
-	}
-
-	// Create provider data structure
+	// Create provider data structure — clients are initialized lazily on first use
 	providerData := &kubectlProviderData{
-		ClientConfig:        clientConfig,
-		MainClientset:       k8sClient,
-		RestConfig:          cfg,
-		AggregatorClientset: aggClient,
-		ApplyRetryCount:     applyRetryCount,
-		logger:              hclog.Default(),
+		ClientConfig:     clientConfig,
+		ApplyRetryCount:  applyRetryCount,
+		terraformVersion: req.TerraformVersion,
+		logger:           hclog.Default(),
 	}
 
 	// Make provider data available to resources, data sources, and actions

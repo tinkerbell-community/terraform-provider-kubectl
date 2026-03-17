@@ -484,11 +484,19 @@ func (r *patchResource) getRestClient(
 	}
 
 	manifest := yamlpkg.NewFromUnstructured(tempUo)
+	mainClientset, err := r.providerData.getMainClientset()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+	restCfg, err := r.providerData.getRestConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubernetes REST config: %w", err)
+	}
 	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
-		r.providerData.MainClientset,
-		r.providerData.RestConfig,
+		mainClientset,
+		restCfg,
 	)
 	if restClient.Error != nil {
 		return nil, fmt.Errorf("failed to create kubernetes rest client: %w", restClient.Error)

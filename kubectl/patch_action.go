@@ -222,11 +222,27 @@ func (a *patchAction) Invoke(
 	}
 
 	manifest := yamlpkg.NewFromUnstructured(tempUo)
+	mainClientset, err := a.providerData.getMainClientset()
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to Create Kubernetes Clientset",
+			fmt.Sprintf("Could not create kubernetes clientset: %s", err),
+		)
+		return
+	}
+	restCfg, err := a.providerData.getRestConfig()
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to Get REST Config",
+			fmt.Sprintf("Could not get kubernetes REST config: %s", err),
+		)
+		return
+	}
 	restClient := api.GetRestClientFromUnstructured(
 		ctx,
 		manifest,
-		a.providerData.MainClientset,
-		a.providerData.RestConfig,
+		mainClientset,
+		restCfg,
 	)
 	if restClient.Error != nil {
 		resp.Diagnostics.AddError(

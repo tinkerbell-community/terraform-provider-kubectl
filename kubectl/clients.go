@@ -20,23 +20,23 @@ import (
 
 // getDynamicClient returns a configured unstructured (dynamic) client instance.
 func (p *kubectlProviderData) getDynamicClient() (dynamic.Interface, error) {
-	if p.RestConfig == nil {
-		return nil, fmt.Errorf("cannot create dynamic client: no client config")
-	}
-
 	return p.dynamicClient.Get(func() (dynamic.Interface, error) {
-		return dynamic.NewForConfig(p.RestConfig)
+		cfg, err := p.getRestConfig()
+		if err != nil {
+			return nil, fmt.Errorf("cannot create dynamic client: %w", err)
+		}
+		return dynamic.NewForConfig(cfg)
 	})
 }
 
 // getDiscoveryClient returns a configured discovery client instance.
 func (p *kubectlProviderData) getDiscoveryClient() (discovery.DiscoveryInterface, error) {
-	if p.RestConfig == nil {
-		return nil, fmt.Errorf("cannot create discovery client: no client config")
-	}
-
 	return p.discoveryClient.Get(func() (discovery.DiscoveryInterface, error) {
-		return discovery.NewDiscoveryClientForConfig(p.RestConfig)
+		cfg, err := p.getRestConfig()
+		if err != nil {
+			return nil, fmt.Errorf("cannot create discovery client: %w", err)
+		}
+		return discovery.NewDiscoveryClientForConfig(cfg)
 	})
 }
 
@@ -55,12 +55,12 @@ func (p *kubectlProviderData) getRestMapper() (meta.RESTMapper, error) {
 
 // getRestClient returns a raw REST client instance.
 func (p *kubectlProviderData) getRestClient() (rest.Interface, error) {
-	if p.RestConfig == nil {
-		return nil, fmt.Errorf("cannot create REST client: no client config")
-	}
-
 	return p.restClient.Get(func() (rest.Interface, error) {
-		cfg := rest.CopyConfig(p.RestConfig)
+		restCfg, err := p.getRestConfig()
+		if err != nil {
+			return nil, fmt.Errorf("cannot create REST client: %w", err)
+		}
+		cfg := rest.CopyConfig(restCfg)
 		cfg.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
 		return rest.UnversionedRESTClientFor(cfg)
 	})
