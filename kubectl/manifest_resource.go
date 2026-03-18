@@ -47,12 +47,13 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource                   = &manifestResource{}
-	_ resource.ResourceWithConfigure      = &manifestResource{}
-	_ resource.ResourceWithIdentity       = &manifestResource{}
-	_ resource.ResourceWithImportState    = &manifestResource{}
-	_ resource.ResourceWithModifyPlan     = &manifestResource{}
-	_ resource.ResourceWithValidateConfig = &manifestResource{}
+	_ resource.Resource                    = &manifestResource{}
+	_ resource.ResourceWithConfigure       = &manifestResource{}
+	_ resource.ResourceWithIdentity        = &manifestResource{}
+	_ resource.ResourceWithImportState     = &manifestResource{}
+	_ resource.ResourceWithModifyPlan      = &manifestResource{}
+	_ resource.ResourceWithUpgradeIdentity = &manifestResource{}
+	_ resource.ResourceWithValidateConfig  = &manifestResource{}
 )
 
 // manifestResource defines the resource implementation.
@@ -272,6 +273,21 @@ func (r *manifestResource) IdentitySchema(
 			"namespace": identityschema.StringAttribute{
 				OptionalForImport: true,
 				Description:       "Namespace of the Kubernetes resource. Empty for cluster-scoped resources.",
+			},
+		},
+	}
+}
+
+// UpgradeIdentity returns identity upgraders for prior identity schema versions.
+// Version 0 represents the default state before identity was introduced.
+func (r *manifestResource) UpgradeIdentity(
+	ctx context.Context,
+) map[int64]resource.IdentityUpgrader {
+	return map[int64]resource.IdentityUpgrader{
+		0: {
+			IdentityUpgrader: func(ctx context.Context, req resource.UpgradeIdentityRequest, resp *resource.UpgradeIdentityResponse) {
+				// Version 0 had no identity. The next Read will populate it
+				// via setResponseIdentity, so nothing to migrate here.
 			},
 		},
 	}
