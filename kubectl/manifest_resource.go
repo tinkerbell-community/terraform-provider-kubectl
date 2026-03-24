@@ -286,8 +286,15 @@ func (r *manifestResource) UpgradeIdentity(
 	return map[int64]resource.IdentityUpgrader{
 		0: {
 			IdentityUpgrader: func(ctx context.Context, req resource.UpgradeIdentityRequest, resp *resource.UpgradeIdentityResponse) {
-				// Version 0 had no identity. The next Read will populate it
-				// via setResponseIdentity, so nothing to migrate here.
+				// Version 0 had no identity data. Set empty strings so the
+				// framework sees a non-null Raw value. The next Read will
+				// overwrite these with real values via setResponseIdentity.
+				resp.Diagnostics.Append(resp.Identity.Set(ctx, manifestIdentityModel{
+					APIVersion: types.StringValue(""),
+					Kind:       types.StringValue(""),
+					Name:       types.StringValue(""),
+					Namespace:  types.StringValue(""),
+				})...)
 			},
 		},
 	}
