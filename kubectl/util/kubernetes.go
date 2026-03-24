@@ -135,12 +135,14 @@ func InitializeConfiguration(
 			overrides.CurrentContext = config.ConfigContext.ValueString()
 		}
 
-		if !config.ConfigContextAuthInfo.IsNull() && config.ConfigContextAuthInfo.ValueString() != "" {
+		if !config.ConfigContextAuthInfo.IsNull() &&
+			config.ConfigContextAuthInfo.ValueString() != "" {
 			overrides.Context = clientcmdapi.Context{}
 			overrides.Context.AuthInfo = config.ConfigContextAuthInfo.ValueString()
 		}
 
-		if !config.ConfigContextCluster.IsNull() && config.ConfigContextCluster.ValueString() != "" {
+		if !config.ConfigContextCluster.IsNull() &&
+			config.ConfigContextCluster.ValueString() != "" {
 			if overrides.Context.AuthInfo == "" {
 				overrides.Context = clientcmdapi.Context{}
 			}

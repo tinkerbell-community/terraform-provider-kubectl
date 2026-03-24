@@ -27,7 +27,6 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
-	aggregator "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 )
 
 // Ensure the implementation satisfies the provider interfaces.
@@ -50,17 +49,16 @@ type kubectlProviderData struct {
 	terraformVersion string
 
 	// Lazily initialized clients
-	logger              hclog.Logger
-	clientConfig        cache[clientcmd.ClientConfig]
-	restConfig          cache[*restclient.Config]
-	mainClientset       cache[*kubernetes.Clientset]
-	aggregatorClientset cache[*aggregator.Clientset]
-	dynamicClient       cache[dynamic.Interface]
-	discoveryClient     cache[discovery.DiscoveryInterface]
-	restMapper          cache[meta.RESTMapper]
-	restClient          cache[restclient.Interface]
-	OAPIFoundry         cache[api.Foundry]
-	crds                cache[[]unstructured.Unstructured]
+	logger          hclog.Logger
+	clientConfig    cache[clientcmd.ClientConfig]
+	restConfig      cache[*restclient.Config]
+	mainClientset   cache[*kubernetes.Clientset]
+	dynamicClient   cache[dynamic.Interface]
+	discoveryClient cache[discovery.DiscoveryInterface]
+	restMapper      cache[meta.RESTMapper]
+	restClient      cache[restclient.Interface]
+	OAPIFoundry     cache[api.Foundry]
+	crds            cache[[]unstructured.Unstructured]
 }
 
 // getClientConfig lazily initializes and returns the clientcmd.ClientConfig.
@@ -96,17 +94,6 @@ func (p *kubectlProviderData) getMainClientset() (*kubernetes.Clientset, error) 
 			return nil, err
 		}
 		return kubernetes.NewForConfig(cfg)
-	})
-}
-
-// getAggregatorClientset lazily initializes and returns the aggregator clientset.
-func (p *kubectlProviderData) getAggregatorClientset() (*aggregator.Clientset, error) {
-	return p.aggregatorClientset.Get(func() (*aggregator.Clientset, error) {
-		cfg, err := p.getRestConfig()
-		if err != nil {
-			return nil, err
-		}
-		return aggregator.NewForConfig(cfg)
 	})
 }
 

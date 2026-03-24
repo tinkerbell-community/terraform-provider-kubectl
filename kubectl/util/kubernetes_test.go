@@ -117,7 +117,7 @@ func TestInitializeConfiguration_hostWithToken(t *testing.T) {
 	if rc.BearerToken != "test-token" {
 		t.Errorf("expected token test-token, got %s", rc.BearerToken)
 	}
-	if !rc.TLSClientConfig.Insecure {
+	if !rc.Insecure {
 		t.Error("expected insecure=true")
 	}
 }
